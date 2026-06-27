@@ -10,11 +10,10 @@ const isDev = process.env.NODE_ENV === 'development'
 const CSP_DIRECTIVES = [
   "default-src 'self'",
 
-  // Scripts — self only; no unsafe-inline, no unsafe-eval
-  // unsafe-eval needed only in dev (Next.js HMR)
+  // Scripts — Next.js App Router requires 'unsafe-inline' for hydration scripts
   isDev
     ? "script-src 'self' 'unsafe-eval' 'unsafe-inline'"
-    : "script-src 'self'",
+    : "script-src 'self' 'unsafe-inline'",
 
   // Styles — allow inline (Tailwind injects <style> tags)
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
