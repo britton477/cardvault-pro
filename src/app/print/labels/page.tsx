@@ -1,4 +1,5 @@
 'use client'
+export const dynamic = 'force-dynamic'
 // =============================================================================
 // /print/labels?ids=uuid1,uuid2,...
 //
