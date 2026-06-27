@@ -1,0 +1,598 @@
+// =============================================================================
+// CardVault Pro — eBay API Client (server-side only)
+//
+// SANDBOX vs PRODUCTION:
+//   Set EBAY_ENV=sandbox  → all traffic goes to eBay sandbox
+//   Set EBAY_ENV=production → live eBay (only when user confirms go-live)
+//
+// Security rules:
+//   - This file MUST NEVER be imported from client-side code
+//   - Credentials are AES-256-GCM encrypted at rest, decrypted only here
+//   - Access tokens auto-refresh transparently via getValidAccessToken()
+// =============================================================================
+
+import crypto from 'crypto'
+import { createAdminClient } from '@/lib/supabase/server'
+
+// ── Environment config ────────────────────────────────────────────────────────
+
+const IS_SANDBOX = (process.env['EBAY_ENV'] ?? 'sandbox') !== 'production'
+
+const URLS = {
+  trading:    IS_SANDBOX
+    ? 'https://api.sandbox.ebay.com/ws/api.dll'
+    : 'https://api.ebay.com/ws/api.dll',
+  finding:    IS_SANDBOX
+    ? 'https://svcs.sandbox.ebay.com/services/search/FindingService/v1'
+    : 'https://svcs.ebay.com/services/search/FindingService/v1',
+  oauthBase:  IS_SANDBOX
+    ? 'https://auth.sandbox.ebay.com'
+    : 'https://auth.ebay.com',
+  tokenUrl:   IS_SANDBOX
+    ? 'https://api.sandbox.ebay.com/identity/v1/oauth2/token'
+    : 'https://api.ebay.com/identity/v1/oauth2/token',
+}
+
+export const EBAY_IS_SANDBOX = IS_SANDBOX
+
+const SITE_ID = 3 // eBay UK
+
+// ── Encryption helpers ────────────────────────────────────────────────────────
+
+const ALGORITHM = 'aes-256-gcm'
+const ENC_KEY   = Buffer.from(process.env['EBAY_ENCRYPTION_KEY']!, 'hex') // 32 bytes
+
+export function encrypt(plaintext: string): string {
+  const iv     = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv(ALGORITHM, ENC_KEY, iv)
+  const enc    = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const tag    = cipher.getAuthTag()
+  return [iv.toString('hex'), tag.toString('hex'), enc.toString('hex')].join('.')
+}
+
+export function decrypt(ciphertext: string): string {
+  const [ivHex, tagHex, encHex] = ciphertext.split('.')
+  if (!ivHex || !tagHex || !encHex) throw new Error('Invalid ciphertext format')
+  const decipher = crypto.createDecipheriv(ALGORITHM, ENC_KEY, Buffer.from(ivHex, 'hex'))
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'))
+  return Buffer.concat([
+    decipher.update(Buffer.from(encHex, 'hex')),
+    decipher.final(),
+  ]).toString('utf8')
+}
+
+// ── Credential types ──────────────────────────────────────────────────────────
+
+export interface EbayCredentials {
+  appId:          string
+  secret:         string
+  ruName:         string
+  accessToken:    string | null
+  refreshToken:   string | null
+  tokenExpiresAt: Date | null
+}
+
+// ── Credential retrieval ──────────────────────────────────────────────────────
+
+export async function getCredentials(orgId: string): Promise<EbayCredentials> {
+  const db = createAdminClient()
+  const { data, error } = await db
+    .from('ebay_credentials')
+    .select('*')
+    .eq('org_id', orgId)
+    .single()
+
+  if (error || !data) {
+    throw new Error('eBay credentials not configured for this organisation')
+  }
+
+  return {
+    appId:          data['app_id_enc']      ? decrypt(data['app_id_enc']  as string) : '',
+    secret:         data['secret_enc']      ? decrypt(data['secret_enc']  as string) : '',
+    ruName:         data['ru_name_enc']     ? decrypt(data['ru_name_enc'] as string) : '',
+    accessToken:    data['access_token_enc']  ? decrypt(data['access_token_enc']  as string) : null,
+    refreshToken:   data['refresh_token_enc'] ? decrypt(data['refresh_token_enc'] as string) : null,
+    tokenExpiresAt: data['token_expires_at']
+      ? new Date(data['token_expires_at'] as string)
+      : null,
+  }
+}
+
+export async function saveCredentials(
+  orgId: string,
+  creds: Pick<EbayCredentials, 'appId' | 'secret' | 'ruName'>,
+): Promise<void> {
+  const db = createAdminClient()
+  const { error } = await db.from('ebay_credentials').upsert({
+    org_id:      orgId,
+    app_id_enc:  encrypt(creds.appId),
+    secret_enc:  encrypt(creds.secret),
+    ru_name_enc: encrypt(creds.ruName),
+    updated_at:  new Date().toISOString(),
+  })
+  if (error) throw new Error(`Failed to save eBay credentials: ${error.message}`)
+}
+
+export async function saveTokens(
+  orgId: string,
+  accessToken: string,
+  refreshToken: string,
+  expiresInSeconds: number,
+): Promise<void> {
+  const db = createAdminClient()
+  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000)
+  const { error } = await db.from('ebay_credentials').update({
+    access_token_enc:  encrypt(accessToken),
+    refresh_token_enc: encrypt(refreshToken),
+    token_expires_at:  expiresAt.toISOString(),
+    updated_at:        new Date().toISOString(),
+  }).eq('org_id', orgId)
+  if (error) throw new Error(`Failed to save eBay tokens: ${error.message}`)
+}
+
+// ── OAuth helpers ─────────────────────────────────────────────────────────────
+
+const OAUTH_SCOPES = [
+  'https://api.ebay.com/oauth/api_scope',
+  'https://api.ebay.com/oauth/api_scope/sell.inventory',
+  'https://api.ebay.com/oauth/api_scope/sell.account',
+  'https://api.ebay.com/oauth/api_scope/sell.fulfillment',
+].join(' ')
+
+/**
+ * Build the eBay consent URL to redirect the user to.
+ * The RuName must match the redirect URI registered in the eBay developer portal.
+ */
+export function buildConsentUrl(appId: string, ruName: string): string {
+  const params = new URLSearchParams({
+    client_id:     appId,
+    redirect_uri:  ruName,
+    response_type: 'code',
+    scope:         OAUTH_SCOPES,
+    prompt:        'login',
+  })
+  return `${URLS.oauthBase}/oauth2/authorize?${params}`
+}
+
+/**
+ * Exchange an authorization code for access + refresh tokens.
+ */
+export async function exchangeCodeForTokens(
+  code: string,
+  appId: string,
+  secret: string,
+  ruName: string,
+): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  const credentials = Buffer.from(`${appId}:${secret}`).toString('base64')
+  const res = await fetch(URLS.tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${credentials}`,
+      'Content-Type':  'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type:   'authorization_code',
+      code,
+      redirect_uri: ruName,
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`eBay token exchange failed (${res.status}): ${text}`)
+  }
+
+  const data = await res.json() as {
+    access_token:  string
+    refresh_token: string
+    expires_in:    number
+  }
+
+  return {
+    accessToken:  data.access_token,
+    refreshToken: data.refresh_token,
+    expiresIn:    data.expires_in,
+  }
+}
+
+/**
+ * Refresh an expired access token using the refresh token.
+ */
+export async function refreshAccessToken(
+  refreshToken: string,
+  appId: string,
+  secret: string,
+): Promise<{ accessToken: string; expiresIn: number }> {
+  const credentials = Buffer.from(`${appId}:${secret}`).toString('base64')
+  const res = await fetch(URLS.tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${credentials}`,
+      'Content-Type':  'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type:    'refresh_token',
+      refresh_token: refreshToken,
+      scope:         OAUTH_SCOPES,
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`eBay token refresh failed (${res.status}): ${text}`)
+  }
+
+  const data = await res.json() as { access_token: string; expires_in: number }
+  return { accessToken: data.access_token, expiresIn: data.expires_in }
+}
+
+/**
+ * Get a valid access token for the org, auto-refreshing if it expires within 5 minutes.
+ * This is the single entry point all Trading API callers should use.
+ */
+export async function getValidAccessToken(orgId: string): Promise<string> {
+  const creds = await getCredentials(orgId)
+
+  if (!creds.accessToken) {
+    throw new Error('eBay account not connected. Please connect via Settings → eBay.')
+  }
+
+  // Refresh if token expires within 5 minutes
+  const fiveMinutes = 5 * 60 * 1000
+  const needsRefresh = !creds.tokenExpiresAt
+    || creds.tokenExpiresAt.getTime() - Date.now() < fiveMinutes
+
+  if (needsRefresh) {
+    if (!creds.refreshToken) {
+      throw new Error('eBay refresh token missing. Please reconnect via Settings → eBay.')
+    }
+    const { accessToken, expiresIn } = await refreshAccessToken(
+      creds.refreshToken, creds.appId, creds.secret,
+    )
+    // Persist the new token (refresh token stays the same until user reconnects)
+    await saveTokens(orgId, accessToken, creds.refreshToken, expiresIn)
+    return accessToken
+  }
+
+  return creds.accessToken
+}
+
+// ── Trading API (XML) ─────────────────────────────────────────────────────────
+
+function buildXmlHeader(callName: string, authToken: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<${callName}Request xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials>
+    <eBayAuthToken>${authToken}</eBayAuthToken>
+  </RequesterCredentials>`
+}
+
+function extractXmlField(xml: string, tag: string): string {
+  const match = xml.match(new RegExp(`<${tag}>([^<]+)<\/${tag}>`))
+  return match?.[1] ?? ''
+}
+
+interface EbayError {
+  code:     string
+  short:    string
+  long:     string
+  severity: string
+}
+
+function extractErrors(xml: string): EbayError[] {
+  const blocks = [...xml.matchAll(/<Errors>([\s\S]*?)<\/Errors>/g)]
+  return blocks.map(m => ({
+    code:     extractXmlField(m[1] ?? '', 'ErrorCode'),
+    short:    extractXmlField(m[1] ?? '', 'ShortMessage'),
+    long:     extractXmlField(m[1] ?? '', 'LongMessage'),
+    severity: extractXmlField(m[1] ?? '', 'SeverityCode'),
+  }))
+}
+
+async function callTradingApi(
+  callName: string,
+  body: string,
+  authToken: string,
+  appId: string,
+): Promise<string> {
+  const res = await fetch(URLS.trading, {
+    method: 'POST',
+    headers: {
+      'Content-Type':                     'text/xml',
+      'X-EBAY-API-CALL-NAME':             callName,
+      'X-EBAY-API-SITEID':                String(SITE_ID),
+      'X-EBAY-API-APP-NAME':              appId,
+      'X-EBAY-API-DEV-NAME':              'CardVaultPro',
+      'X-EBAY-API-CERT-NAME':             '',
+      'X-EBAY-API-COMPATIBILITY-LEVEL':   '967',
+    },
+    body,
+  })
+
+  const text = await res.text()
+  const ack  = extractXmlField(text, 'Ack')
+
+  if (ack !== 'Success' && ack !== 'Warning') {
+    const errors = extractErrors(text)
+    const e = errors[0]
+    const msg = e
+      ? `${e.short}${e.long ? ' — ' + e.long : ''}${e.code ? ' [' + e.code + ']' : ''}`
+      : `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+
+  return text
+}
+
+// ── List a card on eBay ───────────────────────────────────────────────────────
+
+export interface ListItemOptions {
+  orgId:               string
+  title:               string
+  description:         string
+  condition:           string
+  price:               number
+  quantity:            number
+  photoUrls:           string[]
+  location:            string
+  fulfillmentPolicyId: string
+  paymentPolicyId:     string
+  returnPolicyId:      string
+}
+
+const CONDITION_IDS: Record<string, string> = {
+  NM:     '3000',
+  LP:     '4000',
+  MP:     '5000',
+  HP:     '6000',
+  Sealed: '1000',
+}
+
+export async function listItem(opts: ListItemOptions): Promise<string> {
+  const creds    = await getCredentials(opts.orgId)
+  const token    = await getValidAccessToken(opts.orgId)
+  const condId   = CONDITION_IDS[opts.condition] ?? '3000'
+  const pictures = opts.photoUrls
+    .map(u => `<PictureURL>${u}</PictureURL>`)
+    .join('\n')
+
+  const xml = `${buildXmlHeader('AddItem', token)}
+  <Item>
+    <Title>${escapeXml(opts.title)}</Title>
+    <Description><![CDATA[${opts.description}]]></Description>
+    <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>
+    <StartPrice>${opts.price.toFixed(2)}</StartPrice>
+    <ConditionID>${condId}</ConditionID>
+    <Country>GB</Country>
+    <Currency>GBP</Currency>
+    <DispatchTimeMax>3</DispatchTimeMax>
+    <ListingDuration>GTC</ListingDuration>
+    <ListingType>FixedPriceItem</ListingType>
+    <Location>${escapeXml(opts.location)}</Location>
+    <PictureDetails>${pictures}</PictureDetails>
+    <Quantity>${opts.quantity}</Quantity>
+    <SellerProfiles>
+      <SellerFulfillmentProfile>
+        <FulfillmentProfileID>${opts.fulfillmentPolicyId}</FulfillmentProfileID>
+      </SellerFulfillmentProfile>
+      <SellerPaymentProfile>
+        <PaymentProfileID>${opts.paymentPolicyId}</PaymentProfileID>
+      </SellerPaymentProfile>
+      <SellerReturnProfile>
+        <ReturnProfileID>${opts.returnPolicyId}</ReturnProfileID>
+      </SellerReturnProfile>
+    </SellerProfiles>
+  </Item>
+</AddItemRequest>`
+
+  const response = await callTradingApi('AddItem', xml, token, creds.appId)
+  return extractXmlField(response, 'ItemID')
+}
+
+// ── Revise a listing price ────────────────────────────────────────────────────
+
+export async function reviseItem(
+  orgId: string,
+  listingId: string,
+  newPrice: number,
+): Promise<void> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const xml = `${buildXmlHeader('ReviseItem', token)}
+  <Item>
+    <ItemID>${listingId}</ItemID>
+    <StartPrice>${newPrice.toFixed(2)}</StartPrice>
+  </Item>
+</ReviseItemRequest>`
+
+  await callTradingApi('ReviseItem', xml, token, creds.appId)
+}
+
+// ── End a listing ─────────────────────────────────────────────────────────────
+
+export async function endItem(
+  orgId: string,
+  listingId: string,
+  reason: 'NotAvailable' | 'LostOrBroken' | 'OtherListingError' = 'NotAvailable',
+): Promise<void> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const xml = `${buildXmlHeader('EndItem', token)}
+  <ItemID>${listingId}</ItemID>
+  <EndingReason>${reason}</EndingReason>
+</EndItemRequest>`
+
+  await callTradingApi('EndItem', xml, token, creds.appId)
+}
+
+// ── Get active listings ───────────────────────────────────────────────────────
+
+export interface EbayActiveListing {
+  listingId:   string
+  title:       string
+  price:       number
+  quantity:    number
+  watchCount:  number
+  viewCount:   number
+  startTime:   string
+  endTime:     string
+  listingUrl:  string
+}
+
+export async function getActiveListings(orgId: string): Promise<EbayActiveListing[]> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const xml = `${buildXmlHeader('GetMyeBaySelling', token)}
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination>
+      <EntriesPerPage>200</EntriesPerPage>
+      <PageNumber>1</PageNumber>
+    </Pagination>
+  </ActiveList>
+</GetMyeBaySellingRequest>`
+
+  const response = await callTradingApi('GetMyeBaySelling', xml, token, creds.appId)
+
+  const items = [...response.matchAll(/<Item>([\s\S]*?)<\/Item>/g)]
+  return items.map(m => {
+    const block = m[1] ?? ''
+    const listingId = extractXmlField(block, 'ItemID')
+    return {
+      listingId,
+      title:      extractXmlField(block, 'Title'),
+      price:      parseFloat(extractXmlField(block, 'CurrentPrice') || '0'),
+      quantity:   parseInt(extractXmlField(block, 'Quantity') || '1', 10),
+      watchCount: parseInt(extractXmlField(block, 'WatchCount') || '0', 10),
+      viewCount:  parseInt(extractXmlField(block, 'HitCount') || '0', 10),
+      startTime:  extractXmlField(block, 'ListingDetails>StartTime').replace('ListingDetails>', '') ||
+                  extractXmlField(block, 'StartTime'),
+      endTime:    extractXmlField(block, 'ListingDetails>EndTime').replace('ListingDetails>', '') ||
+                  extractXmlField(block, 'EndTime'),
+      listingUrl: IS_SANDBOX
+        ? `https://www.sandbox.ebay.co.uk/itm/${listingId}`
+        : `https://www.ebay.co.uk/itm/${listingId}`,
+    }
+  }).filter(l => l.listingId && l.price > 0)
+}
+
+// ── Finding API — sold price lookup ──────────────────────────────────────────
+//
+// Replaces the deprecated Trading API GetSearchResults call.
+// Uses the App ID only — no user OAuth token required.
+// Returns completed/sold fixed-price listings from the last 90 days.
+
+export interface SoldListing {
+  title: string
+  price: number
+  date:  string
+}
+
+// Maps our internal condition codes to eBay condition IDs for filtering
+// https://developer.ebay.com/devzone/finding/callref/types/ItemFilterType.html
+const CONDITION_FILTER_IDS: Record<string, string[]> = {
+  NM:     ['3000'],            // Very Good
+  LP:     ['4000'],            // Good
+  MP:     ['5000'],            // Acceptable
+  HP:     ['6000'],            // For parts or not working
+  Sealed: ['1000', '1500'],    // New, New Other
+}
+
+/**
+ * Fetch completed/sold eBay prices for a card.
+ *
+ * Uses Finding API findCompletedItems (app token only, no user OAuth needed).
+ * Optionally filters by condition to prevent NM/HP price mixing.
+ *
+ * Outlier removal: drops prices outside 3× the interquartile range to exclude
+ * bundles, graded slabs, and data entry errors from the result set before the
+ * median is computed.
+ */
+export async function fetchSoldPrices(
+  orgId: string,
+  cardName: string,
+  setCode?: string,
+  condition?: string,   // Optional: 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
+  cardNumber?: string,  // Optional: e.g. '025' — narrows results to specific print
+): Promise<SoldListing[]> {
+  const creds = await getCredentials(orgId)
+  if (!creds.appId) throw new Error('eBay App ID not configured')
+
+  // Card number significantly narrows results when present (e.g. "Charizard Base Set 4/102")
+  const query = [cardName, setCode, cardNumber ? `${cardNumber}` : undefined].filter(Boolean).join(' ')
+
+  // Build base params
+  const params = new URLSearchParams({
+    'OPERATION-NAME':                 'findCompletedItems',
+    'SERVICE-VERSION':                '1.13.0',
+    'SECURITY-APPNAME':               creds.appId,
+    'RESPONSE-DATA-FORMAT':           'JSON',
+    'REST-PAYLOAD':                   '',
+    'keywords':                       query,
+    'itemFilter(0).name':             'SoldItemsOnly',
+    'itemFilter(0).value':            'true',
+    'itemFilter(1).name':             'ListingType',
+    'itemFilter(1).value':            'FixedPrice',
+    'sortOrder':                      'EndTimeSoonest',
+    'paginationInput.entriesPerPage': '100',  // increased from 50 for better outlier removal
+    'paginationInput.pageNumber':     '1',
+    'siteid':                         String(SITE_ID),
+  })
+
+  // Add condition filter if we have a mapping for it
+  const conditionIds = condition ? CONDITION_FILTER_IDS[condition] : undefined
+  if (conditionIds?.length) {
+    conditionIds.forEach((id, i) => {
+      params.set(`itemFilter(${2 + i}).name`,  'Condition')
+      params.set(`itemFilter(${2 + i}).value`, id)
+    })
+  }
+
+  const res = await fetch(`${URLS.finding}?${params}`)
+  if (!res.ok) throw new Error(`eBay Finding API error: HTTP ${res.status}`)
+
+  const json = await res.json() as {
+    findCompletedItemsResponse?: [{
+      searchResult?: [{ item?: Array<{
+        title:           [string]
+        sellingStatus:   [{ currentPrice: [{ __value__: string }] }]
+        listingInfo:     [{ endTime: [string] }]
+      }> }]
+    }]
+  }
+
+  const items = json?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item ?? []
+  const raw = items.map(item => ({
+    title: item.title?.[0] ?? '',
+    price: parseFloat(item.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ ?? '0'),
+    date:  item.listingInfo?.[0]?.endTime?.[0] ?? '',
+  })).filter(i => i.price > 0)
+
+  // IQR-based outlier removal — drops bundles, slabs, and data errors
+  // Only applied when we have enough data points to be meaningful
+  if (raw.length >= 8) {
+    const sorted = [...raw].sort((a, b) => a.price - b.price)
+    const q1 = sorted[Math.floor(sorted.length * 0.25)]!.price
+    const q3 = sorted[Math.floor(sorted.length * 0.75)]!.price
+    const iqr = q3 - q1
+    const lo  = q1 - 3 * iqr
+    const hi  = q3 + 3 * iqr
+    return raw.filter(i => i.price >= lo && i.price <= hi)
+  }
+
+  return raw
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g,  '&lt;')
+    .replace(/>/g,  '&gt;')
+    .replace(/"/g,  '&quot;')
+    .replace(/'/g,  '&apos;')
+}

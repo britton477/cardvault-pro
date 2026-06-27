@@ -1,0 +1,44 @@
+{
+  "name": "CardVault Pro",
+  "short_name": "CardVault",
+  "description": "Professional TCG inventory management — built for card dealers",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-GB",
+  "categories": ["business", "finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Add card",
+      "short_name": "Add card",
+      "description": "Add a new card to stock",
+      "url": "/dashboard?action=add-card",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Show Mode",
+      "short_name": "Show Mode",
+      "description": "Mobile quick-sale mode for card shows",
+      "url": "/show",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "prefer_related_applications": false
+}

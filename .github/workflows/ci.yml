@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  quality:
+    name: Type check & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npm run type-check
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Build (verifies no compile errors)
+        run: npm run build
+        env:
+          # Stub values so the build doesn't fail on env validation
+          NEXT_PUBLIC_SUPABASE_URL: https://stub.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: stub
+          SUPABASE_SERVICE_ROLE_KEY: stub
+          EBAY_ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          NEXT_PUBLIC_APP_URL: https://stub.example.com
+          # Sentry disabled in CI builds
+          NEXT_PUBLIC_SENTRY_DSN: ''

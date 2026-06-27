@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* CardVault dark theme — CSS custom properties */
+    --background:         222 20% 10%;
+    --foreground:         210 40% 96%;
+    --card:               222 20% 14%;
+    --card-foreground:    210 40% 96%;
+    --popover:            222 20% 12%;
+    --popover-foreground: 210 40% 96%;
+    --primary:            263 70% 60%;    /* violet accent */
+    --primary-foreground: 0 0% 100%;
+    --secondary:          222 20% 20%;
+    --secondary-foreground: 210 40% 90%;
+    --muted:              222 20% 18%;
+    --muted-foreground:   210 20% 55%;
+    --accent:             263 70% 60%;
+    --accent-foreground:  0 0% 100%;
+    --destructive:        0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border:             222 20% 22%;
+    --input:              222 20% 18%;
+    --ring:               263 70% 60%;
+    --radius:             0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* Custom scrollbar */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: hsl(var(--background)); }
+  ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+}
+
+@layer utilities {
+  .text-muted       { color: hsl(var(--muted-foreground)); }
+  .profit-positive  { color: #4ade80; }
+  .profit-negative  { color: #f87171; }
+}
