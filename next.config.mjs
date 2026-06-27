@@ -78,6 +78,8 @@ const config = {
       { protocol: 'https', hostname: '*.supabase.co' },
       // R2 public development URL
       { protocol: 'https', hostname: 'pub-c59cea87a1864fec8d9b26dff50021ed.r2.dev' },
+      // imgbb (legacy — remove once all images migrated to Supabase Storage)
+      { protocol: 'https', hostname: 'i.ibb.co' },
     ],
     minimumCacheTTL: 86400, // cache optimised images for 24 hours
   },
