@@ -1,4 +1,4 @@
-import type { NextConfig } from 'next'
+// @ts-check
 
 // =============================================================================
 // Content Security Policy
@@ -58,7 +58,8 @@ const CSP_DIRECTIVES = [
 ].join('; ')
 
 
-const config: NextConfig = {
+/** @type {import('next').NextConfig} */
+const config = {
   // ── Performance ─────────────────────────────────────────────────────────────
   compress:       true,   // gzip response bodies at the Node.js layer
   poweredByHeader: false, // don't leak "X-Powered-By: Next.js"
@@ -130,7 +131,6 @@ const config: NextConfig = {
   // ── Experimental features ────────────────────────────────────────────────────
   experimental: {
     typedRoutes: true,
-    // optimisticClientCache: true, — enable when Next.js 15 stable
   },
 }
 
