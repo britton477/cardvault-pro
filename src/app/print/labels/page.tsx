@@ -1,5 +1,4 @@
 'use client'
-export const dynamic = 'force-dynamic'
 // =============================================================================
 // /print/labels?ids=uuid1,uuid2,...
 //
@@ -7,8 +6,8 @@ export const dynamic = 'force-dynamic'
 // Renders a 2-column price-label grid and auto-triggers window.print().
 // Label size matches Avery L7165 (99.1 × 67.7 mm), 8 per A4 sheet.
 // =============================================================================
-import { useEffect, useState, useCallback } from 'react'
-import { useSearchParams }                   from 'next/navigation'
+import { useEffect, useState, useCallback, Suspense } from 'react'
+import { useSearchParams }                             from 'next/navigation'
 import { Printer, AlertCircle }              from 'lucide-react'
 import { formatGBP }                         from '@/lib/utils'
 import type { Card }                         from '@/types'
@@ -112,7 +111,7 @@ function Label({ card, shopName }: { card: Card; shopName: string }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function PrintLabelsPage() {
+function PrintLabelsContent() {
   const searchParams = useSearchParams()
   const idsParam     = searchParams.get('ids') ?? ''
 
@@ -254,5 +253,13 @@ export default function PrintLabelsPage() {
         </p>
       </div>
     </>
+  )
+}
+
+export default function PrintLabelsPage() {
+  return (
+    <Suspense>
+      <PrintLabelsContent />
+    </Suspense>
   )
 }

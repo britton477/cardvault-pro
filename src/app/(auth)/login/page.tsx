@@ -1,7 +1,6 @@
 'use client'
-export const dynamic = 'force-dynamic'
 
-import { useState, useTransition } from 'react'
+import { Suspense, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -12,7 +11,7 @@ const URL_ERRORS: Record<string, string> = {
   confirmation_expired:  'Your confirmation link has expired. Please sign in — if your email isn\'t confirmed yet, request a new link from your email app.',
 }
 
-export default function LoginPage() {
+function LoginContent() {
   const router        = useRouter()
   const searchParams  = useSearchParams()
   const redirect      = searchParams.get('redirect') ?? '/dashboard'
@@ -124,5 +123,13 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
   )
 }
