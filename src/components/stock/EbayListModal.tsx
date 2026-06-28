@@ -17,12 +17,34 @@ import { formatGBP }    from '@/lib/utils'
 import type { Card }    from '@/types'
 import { buildListingTitle, buildListingDescription } from '@/lib/ebay-client'
 
-// ── eBay fee estimation ───────────────────────────────────────────────────────
-// UK Buyer Protection fee is approximately 5.26% added to item price
-const EBAY_BP_RATE = 0.0526
+// ── eBay Buyer Protection fee (UK, from 17 July 2025) ────────────────────────
+// Tiered structure added ON TOP of the item price — seller receives 100%.
+//   7% on first £20
+//   4% on £20–£300
+//   2% on £300–£4,000
+//   £0.10 flat per item
+// https://www.ebay.co.uk/help/selling/fees-credits-invoices/selling-fees
 
-function estimateBuyerPays(itemPrice: number): number {
-  return Math.round((itemPrice * (1 + EBAY_BP_RATE)) * 100) / 100
+function calcBuyerProtectionFee(price: number): number {
+  if (price <= 0) return 0
+  let fee = 0.10 // flat per item
+  if (price <= 20) {
+    fee += price * 0.07
+  } else if (price <= 300) {
+    fee += 20 * 0.07 + (price - 20) * 0.04
+  } else if (price <= 4000) {
+    fee += 20 * 0.07 + 280 * 0.04 + (price - 300) * 0.02
+  } else {
+    fee += 20 * 0.07 + 280 * 0.04 + 3700 * 0.02
+  }
+  return Math.round(fee * 100) / 100
+}
+
+function effectiveBpfRate(price: number): string {
+  if (price <= 0) return '7%'
+  const fee = calcBuyerProtectionFee(price) - 0.10
+  const pct  = (fee / price) * 100
+  return `${pct.toFixed(1)}%`
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -101,7 +123,8 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
   if (!open || !card) return null
 
   const price      = Number(priceInput) || 0
-  const buyerPays  = estimateBuyerPays(price)
+  const bpFee      = calcBuyerProtectionFee(price)
+  const buyerPays  = Math.round((price + bpFee) * 100) / 100
   const isHighValue = price >= 20
   const priceValid  = price > 0
 
@@ -194,9 +217,9 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
                   <div className="flex items-center justify-between px-4 py-2.5">
                     <span className="text-muted-foreground">
                       eBay Buyer Protection fee{' '}
-                      <span className="text-xs">(~{(EBAY_BP_RATE * 100).toFixed(1)}% added to buyer)</span>
+                      <span className="text-xs">(~{effectiveBpfRate(price)} + £0.10 flat)</span>
                     </span>
-                    <span className="text-muted-foreground">+{formatGBP(buyerPays - price)}</span>
+                    <span className="text-muted-foreground">+{formatGBP(bpFee)}</span>
                   </div>
                   <div className="flex items-center justify-between px-4 py-2.5 bg-secondary/60 rounded-b-lg">
                     <span className="font-medium text-foreground">Buyer will pay</span>

@@ -6,7 +6,8 @@
 //   b) CardDetailSlideOver ("Record sale" CTA)  → pre-filled from card
 //
 // Features:
-//  - eBay FVF auto-calculation (12.35% UK Trading Cards rate)
+//  - eBay fees auto-set to £0 (private sellers pay no fees since Oct 2024)
+//  - Shipping auto-fill: <£20 → £1.00 (RM 2nd Class), ≥£20 → £2.85 (RM T48)
 //  - Live profit preview banner
 //  - Tracking number field shown when status is Shipped / Fulfilled
 //  - Pre-filled card fields are read-only when opened from a card
@@ -23,14 +24,22 @@ import { cn, formatGBP } from '@/lib/utils'
 import { CONDITIONS } from '@/components/stock/cardConstants'
 import type { Card, SalePlatform, SaleStatus } from '@/types'
 
-// ── eBay fee calculator ───────────────────────────────────────────────────────
-// UK Trading Cards category: 12.35% FVF on the sold amount
-const EBAY_FVF_RATE = 0.1235
-
-function calcEbayFees(soldPrice: number): number {
-  if (soldPrice <= 0) return 0
-  return Math.round(soldPrice * EBAY_FVF_RATE * 100) / 100
+// ── Postage auto-fill ─────────────────────────────────────────────────────────
+// Royal Mail 2nd Class (under £20) or Tracked 48 (£20+)
+function autoShipping(soldPrice: number): string {
+  if (soldPrice <= 0) return ''
+  return soldPrice < 20 ? '1.00' : '2.85'
 }
+
+function shippingLabel(soldPrice: number): string {
+  return soldPrice > 0 && soldPrice < 20
+    ? 'Auto: Royal Mail 2nd Class'
+    : 'Auto: Royal Mail Tracked 48'
+}
+
+// ── eBay fees ─────────────────────────────────────────────────────────────────
+// Private sellers on eBay UK pay zero platform fees since October 2024.
+function calcEbayFees(_soldPrice: number): string { return '0' }
 
 // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -45,6 +54,7 @@ interface FormState {
   fees:            string
   feesAuto:        boolean    // true = fees are being auto-calculated
   shipping:        string
+  shippingAuto:    boolean    // true = shipping is auto-filled from sold_price
   purchase_price:  string
   sale_date:       string
   sale_status:     SaleStatus
@@ -63,6 +73,7 @@ function blankForm(): FormState {
     fees:            '',
     feesAuto:        true,
     shipping:        '',
+    shippingAuto:    true,
     purchase_price:  '',
     sale_date:       new Date().toISOString().slice(0, 10),
     sale_status:     'Sold',
@@ -107,21 +118,22 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
     }
   }, [open, prefill?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Generic field setter with eBay auto-fee side-effect ───────────────────
+  // ── Generic field setter with auto-fill side-effects ─────────────────────
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(prev => {
       const next = { ...prev, [key]: value }
-      // Recalculate eBay fees when sold_price or platform changes
+
+      // Auto-fill eBay fees (private seller = £0) when sold_price or platform changes
       if ((key === 'sold_price' || key === 'platform') && next.feesAuto) {
-        const price = parseFloat(
-          key === 'sold_price' ? (value as string) : next.sold_price,
-        )
-        if (next.platform === 'eBay' && !isNaN(price) && price > 0) {
-          next.fees = String(calcEbayFees(price))
-        } else if (next.platform !== 'eBay') {
-          next.fees = ''
-        }
+        next.fees = next.platform === 'eBay' ? calcEbayFees(0) : ''
       }
+
+      // Auto-fill shipping when sold_price changes
+      if (key === 'sold_price' && next.shippingAuto) {
+        const price = parseFloat(value as string)
+        next.shipping = !isNaN(price) && price > 0 ? autoShipping(price) : ''
+      }
+
       return next
     })
   }
@@ -131,13 +143,24 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
     setForm(prev => ({ ...prev, fees: val, feesAuto: false }))
   }
 
-  // Re-enable auto-calc and recalculate from current sold_price
+  // Re-enable fee auto-calc
   function resetFeesAuto() {
+    setForm(prev => ({ ...prev, fees: prev.platform === 'eBay' ? calcEbayFees(0) : '', feesAuto: true }))
+  }
+
+  // Manual shipping override — disables auto-fill
+  function handleShippingChange(val: string) {
+    setForm(prev => ({ ...prev, shipping: val, shippingAuto: false }))
+  }
+
+  // Re-enable shipping auto-fill
+  function resetShippingAuto() {
     const price = parseFloat(form.sold_price)
-    const fees  = form.platform === 'eBay' && !isNaN(price) && price > 0
-      ? String(calcEbayFees(price))
-      : ''
-    setForm(prev => ({ ...prev, fees, feesAuto: true }))
+    setForm(prev => ({
+      ...prev,
+      shipping:     !isNaN(price) && price > 0 ? autoShipping(price) : '',
+      shippingAuto: true,
+    }))
   }
 
   // ── Live profit preview ───────────────────────────────────────────────────
@@ -376,7 +399,7 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
                       placeholder="0.00"
                       hint={
                         form.feesAuto && form.platform === 'eBay'
-                          ? `Auto: ${(EBAY_FVF_RATE * 100).toFixed(2)}% eBay FVF`
+                          ? 'Auto: private seller — no fees'
                           : undefined
                       }
                     />
@@ -391,16 +414,34 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
                       </button>
                     )}
                   </div>
-                  <Input
-                    label="Shipping cost"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    prefix="£"
-                    value={form.shipping}
-                    onChange={e => set('shipping', e.target.value)}
-                    placeholder="0.00"
-                  />
+                  {/* Shipping with auto-fill toggle */}
+                  <div>
+                    <Input
+                      label="Shipping cost"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      prefix="£"
+                      value={form.shipping}
+                      onChange={e => handleShippingChange(e.target.value)}
+                      placeholder="0.00"
+                      hint={
+                        form.shippingAuto && soldPrice > 0
+                          ? shippingLabel(soldPrice)
+                          : undefined
+                      }
+                    />
+                    {!form.shippingAuto && (
+                      <button
+                        type="button"
+                        onClick={resetShippingAuto}
+                        className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <Calculator className="h-3 w-3" />
+                        Auto-fill
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Live profit preview — only shown once sold_price has a value */}

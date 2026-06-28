@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { AlertCircle, Layers, Pencil, Tag, ShoppingBag, ReceiptText, RefreshCw, ExternalLink } from 'lucide-react'
 import { cn, formatGBP, formatDate } from '@/lib/utils'
 import { ConditionBadge, StatusBadge, SkeletonTableRow, EmptyState } from '@/components/ui'
@@ -63,6 +64,9 @@ export function StockTable({
   showCardNumber = false,
   pendingIds, pricePendingIds, onQuickStatus, onDirectEdit, onRecordSale, onListEbay, onRefreshPrice,
 }: StockTableProps) {
+  // Track which card's "List item" platform picker is open
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
+
   const bulkEnabled = Boolean(selectedIds && onToggleSelect)
   const COLUMNS = 10 + (bulkEnabled ? 1 : 0) + (showCardNumber ? 1 : 0)
 
@@ -267,30 +271,53 @@ export function StockTable({
                         <Pencil className="h-3.5 w-3.5" />
                       </IBtn>
 
-                      {/* Mark Listed — In Stock only */}
-                      {card.status === 'In Stock' && onQuickStatus && (
-                        <IBtn
-                          title="Mark as Listed"
-                          onClick={() => onQuickStatus(card)}
-                          disabled={pendingIds?.has(card.id)}
-                          colour="text-amber-400 hover:bg-amber-500/10 hover:text-amber-400"
-                        >
-                          {pendingIds?.has(card.id)
-                            ? <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
-                            : <Tag className="h-3.5 w-3.5" />
-                          }
-                        </IBtn>
-                      )}
-
-                      {/* List on eBay — not Sold */}
-                      {card.status !== 'Sold' && onListEbay && (
-                        <IBtn
-                          title="List on eBay"
-                          onClick={() => onListEbay(card)}
-                          colour="text-primary/70 hover:bg-primary/10 hover:text-primary"
-                        >
-                          <ShoppingBag className="h-3.5 w-3.5" />
-                        </IBtn>
+                      {/* List item — In Stock only: platform picker dropdown */}
+                      {card.status === 'In Stock' && (onQuickStatus || onListEbay) && (
+                        <div className="relative">
+                          <IBtn
+                            title="List item"
+                            onClick={() => setOpenDropdownId(prev => prev === card.id ? null : card.id)}
+                            disabled={pendingIds?.has(card.id)}
+                            colour="text-amber-400 hover:bg-amber-500/10 hover:text-amber-400"
+                          >
+                            {pendingIds?.has(card.id)
+                              ? <span className="h-3 w-3 rounded-full border border-current border-t-transparent animate-spin" />
+                              : <Tag className="h-3.5 w-3.5" />
+                            }
+                          </IBtn>
+                          {openDropdownId === card.id && (
+                            <>
+                              {/* Transparent backdrop — click outside to close */}
+                              <div
+                                className="fixed inset-0 z-10"
+                                onClick={() => setOpenDropdownId(null)}
+                              />
+                              {/* Platform picker */}
+                              <div className="absolute right-0 top-full mt-1 z-20 min-w-[148px] rounded-md border border-border bg-card shadow-lg py-1">
+                                {onListEbay && (
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-secondary transition-colors text-left"
+                                    onClick={() => { setOpenDropdownId(null); onListEbay(card) }}
+                                  >
+                                    <ShoppingBag className="h-3 w-3 text-primary flex-shrink-0" />
+                                    List on eBay
+                                  </button>
+                                )}
+                                {onQuickStatus && (
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-secondary transition-colors text-left"
+                                    onClick={() => { setOpenDropdownId(null); onQuickStatus(card) }}
+                                  >
+                                    <Tag className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                    Other platform
+                                  </button>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
 
                       {/* Record Sale — not already Sold */}

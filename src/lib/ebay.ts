@@ -340,18 +340,22 @@ export interface ListItemOptions {
   returnPolicyId:      string
 }
 
+// eBay condition IDs for Trading Card / Collectibles categories (e.g. 183454).
+// These categories reject the generic Used (3000) / VG (4000) etc. IDs and
+// require the collectibles grading vocabulary instead.
+// Source: eBay GetCategoryFeatures for category 183454
 const CONDITION_IDS: Record<string, string> = {
-  NM:     '3000',
-  LP:     '4000',
-  MP:     '5000',
-  HP:     '6000',
-  Sealed: '1000',
+  NM:     '2750',   // Like New
+  LP:     '2500',   // Very Good
+  MP:     '2000',   // Good
+  HP:     '1500',   // Acceptable
+  Sealed: '1000',   // New
 }
 
 export async function listItem(opts: ListItemOptions): Promise<string> {
   const creds    = await getCredentials(opts.orgId)
   const token    = await getValidAccessToken(opts.orgId)
-  const condId   = CONDITION_IDS[opts.condition] ?? '3000'
+  const condId   = CONDITION_IDS[opts.condition] ?? '2500'
   const pictures = opts.photoUrls
     .map(u => `<PictureURL>${u}</PictureURL>`)
     .join('\n')
@@ -491,13 +495,14 @@ export interface SoldListing {
   date:  string
 }
 
-// Maps our internal condition codes to eBay condition IDs for filtering
+// Maps our internal condition codes to eBay Finding API condition IDs.
+// Must match CONDITION_IDS above (collectibles vocabulary for category 183454).
 // https://developer.ebay.com/devzone/finding/callref/types/ItemFilterType.html
 const CONDITION_FILTER_IDS: Record<string, string[]> = {
-  NM:     ['3000'],            // Very Good
-  LP:     ['4000'],            // Good
-  MP:     ['5000'],            // Acceptable
-  HP:     ['6000'],            // For parts or not working
+  NM:     ['2750'],            // Like New
+  LP:     ['2500'],            // Very Good
+  MP:     ['2000'],            // Good
+  HP:     ['1500'],            // Acceptable
   Sealed: ['1000', '1500'],    // New, New Other
 }
 
