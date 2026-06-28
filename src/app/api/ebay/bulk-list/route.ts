@@ -17,7 +17,7 @@ import { type NextRequest } from 'next/server'
 import { ZodError }         from 'zod'
 import { createAdminClient }            from '@/lib/supabase/server'
 import { requireAuth, ok, serverError, validationError } from '@/lib/api'
-import { listItem, getCredentials }     from '@/lib/ebay'
+import { listItem, getCredentials, buildListingTitle, buildListingDescription } from '@/lib/ebay'
 import { writeAuditLog }                from '@/lib/audit'
 import { BulkEbayListSchema }           from '@/types/validation'
 
@@ -102,37 +102,44 @@ export async function POST(request: NextRequest) {
       // Attempt listing
       try {
         const photoUrls = ((card.photos ?? []) as Array<{ url: string }>).map(p => p.url)
+        const listPrice = card.listed_price as number
 
-        const title = [
-          card.card_name,
-          card.set_code,
-          card.card_number,
-          card.condition,
-          card.foil_type !== 'Normal' ? card.foil_type : '',
-          card.is_graded ? `${card.grader as string} ${card.grade as string}` : '',
-        ].filter(Boolean).join(' ').slice(0, 80)
+        const cardData = {
+          card_name:   card.card_name   as string,
+          set_code:    card.set_code    as string,
+          card_number: card.card_number as string | null,
+          condition:   card.condition   as string,
+          foil_type:   card.foil_type   as string | null,
+          is_graded:   card.is_graded   as boolean,
+          grader:      card.grader      as string | null,
+          grade:       card.grade       as string | null,
+          notes:       card.notes       as string | null,
+        }
 
-        const description = [
-          `${card.card_name as string} — ${card.set_code as string} #${card.card_number as string}`,
-          `Condition: ${card.condition as string}`,
-          card.foil_type !== 'Normal'  ? `Foil: ${card.foil_type as string}` : '',
-          card.is_graded               ? `Graded: ${card.grader as string} ${card.grade as string}` : '',
-          card.notes                   ? String(card.notes) : '',
-          '\nListed via CardVault Pro',
-        ].filter(Boolean).join('\n')
+        const title       = buildListingTitle(cardData)
+        const description = buildListingDescription(
+          cardData,
+          listPrice,
+          (settings.shop_name as string | null) ?? 'VaultHunters TCG',
+        )
+
+        // Select fulfillment policy: tracked (£20+) vs standard (under £20)
+        const fulfillmentPolicyId = listPrice >= 20
+          ? ((settings.ebay_fulfillment_policy_id_high as string | null) ?? (settings.ebay_fulfillment_policy_id as string))
+          : (settings.ebay_fulfillment_policy_id as string)
 
         const listingId = await listItem({
           orgId,
           title,
           description,
-          condition:           card.condition as string,
-          price:               card.listed_price as number,
+          condition:           card.condition   as string,
+          price:               listPrice,
           quantity:            1,
           photoUrls,
           location:            (settings.item_location as string | null) ?? 'United Kingdom',
-          fulfillmentPolicyId: settings.ebay_fulfillment_policy_id as string,
-          paymentPolicyId:     settings.ebay_payment_policy_id     as string,
-          returnPolicyId:      settings.ebay_return_policy_id      as string,
+          fulfillmentPolicyId,
+          paymentPolicyId:     settings.ebay_payment_policy_id as string,
+          returnPolicyId:      settings.ebay_return_policy_id  as string,
         })
 
         // Update card record

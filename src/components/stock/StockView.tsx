@@ -11,6 +11,8 @@ import { EditCardModal }                     from '@/components/stock/EditCardMo
 import { CardDetailSlideOver }               from '@/components/stock/CardDetailSlideOver'
 import { BulkActionBar }                     from '@/components/stock/BulkActionBar'
 import { BulkEbayModal }                     from '@/components/stock/BulkEbayModal'
+import { EbayListModal }                     from '@/components/stock/EbayListModal'
+import { useOrgSettings }                    from '@/hooks/useSettings'
 import { BulkAssignLotModal }               from '@/components/stock/BulkAssignLotModal'
 import { RecordSaleModal }                   from '@/components/sales/RecordSaleModal'
 import { Button }                            from '@/components/ui/Button'
@@ -74,7 +76,10 @@ export function StockView() {
   const [pricePendingIds,   setPricePendingIds]   = useState<Set<string>>(new Set())
 
   // ebayCards: when user clicks "List on eBay" for a single row, we list just that card
-  const [ebayModalCards, setEbayModalCards] = useState<Card[]>([])
+  const [ebayModalCards,   setEbayModalCards]   = useState<Card[]>([])
+  const [ebayListCard,     setEbayListCard]     = useState<Card | null>(null)
+
+  const { data: orgSettings } = useOrgSettings()
 
   // ── Sale queue — sequential multi-card recording ─────────────────────────
 
@@ -260,10 +265,9 @@ export function StockView() {
     setSaleQueueIdx(0)
   }
 
-  /** List a single card on eBay — opens BulkEbayModal with just that card */
+  /** List a single card on eBay — opens EbayListModal for price + preview flow */
   function handleListEbayCard(card: Card) {
-    setEbayModalCards([card])
-    setShowEbayModal(true)
+    setEbayListCard(card)
   }
 
   /** Refresh eBay price for a single card */
@@ -508,7 +512,16 @@ export function StockView() {
         onConfirm={(lotId) => handleBulkAssignLot(lotId)}
       />
 
-      {/* eBay listing modal — handles single-row OR bulk */}
+      {/* Single-card eBay listing modal — price input + fee breakdown + description preview */}
+      <EbayListModal
+        open={!!ebayListCard}
+        onClose={() => setEbayListCard(null)}
+        card={ebayListCard}
+        shopName={orgSettings?.shop_name ?? 'VaultHunters TCG'}
+        onSuccess={() => { setEbayListCard(null); void queryClient.invalidateQueries({ queryKey: ['cards'] }) }}
+      />
+
+      {/* Bulk eBay listing modal — for BulkActionBar multi-selection */}
       <BulkEbayModal
         open={showEbayModal}
         onClose={() => { setShowEbayModal(false); setEbayModalCards([]) }}

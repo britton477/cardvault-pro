@@ -12,9 +12,10 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 
 interface FormState {
-  fulfillment: string
-  payment:     string
-  return_:     string
+  fulfillment:     string
+  fulfillmentHigh: string
+  payment:         string
+  return_:         string
 }
 
 export function PolicyIdsForm() {
@@ -22,15 +23,16 @@ export function PolicyIdsForm() {
   const update = useUpdateOrgSettings()
   const { toast } = useToast()
 
-  const [form,  setForm]  = useState<FormState>({ fulfillment: '', payment: '', return_: '' })
+  const [form,  setForm]  = useState<FormState>({ fulfillment: '', fulfillmentHigh: '', payment: '', return_: '' })
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     if (!settings) return
     setForm({
-      fulfillment: settings.ebay_fulfillment_policy_id ?? '',
-      payment:     settings.ebay_payment_policy_id     ?? '',
-      return_:     settings.ebay_return_policy_id      ?? '',
+      fulfillment:     settings.ebay_fulfillment_policy_id      ?? '',
+      fulfillmentHigh: settings.ebay_fulfillment_policy_id_high ?? '',
+      payment:         settings.ebay_payment_policy_id          ?? '',
+      return_:         settings.ebay_return_policy_id           ?? '',
     })
   }, [settings])
 
@@ -42,9 +44,10 @@ export function PolicyIdsForm() {
   async function handleSave() {
     try {
       await update.mutateAsync({
-        ebay_fulfillment_policy_id: form.fulfillment.trim() || null,
-        ebay_payment_policy_id:     form.payment.trim()     || null,
-        ebay_return_policy_id:      form.return_.trim()     || null,
+        ebay_fulfillment_policy_id:      form.fulfillment.trim()     || null,
+        ebay_fulfillment_policy_id_high: form.fulfillmentHigh.trim() || null,
+        ebay_payment_policy_id:          form.payment.trim()         || null,
+        ebay_return_policy_id:           form.return_.trim()         || null,
       })
       setSaved(true)
       toast.success('Policy IDs saved')
@@ -56,11 +59,12 @@ export function PolicyIdsForm() {
   // Allow saving if:
   //  a) settings loaded and values actually changed (normal case), OR
   //  b) settings failed/missing but user has typed something (first-time setup)
-  const hasValues = !!(form.fulfillment || form.payment || form.return_)
+  const hasValues = !!(form.fulfillment || form.fulfillmentHigh || form.payment || form.return_)
   const isDirty = settings
-    ? (form.fulfillment !== (settings.ebay_fulfillment_policy_id ?? '') ||
-       form.payment     !== (settings.ebay_payment_policy_id     ?? '') ||
-       form.return_     !== (settings.ebay_return_policy_id      ?? ''))
+    ? (form.fulfillment     !== (settings.ebay_fulfillment_policy_id      ?? '') ||
+       form.fulfillmentHigh !== (settings.ebay_fulfillment_policy_id_high ?? '') ||
+       form.payment         !== (settings.ebay_payment_policy_id          ?? '') ||
+       form.return_         !== (settings.ebay_return_policy_id           ?? ''))
     : hasValues
 
   return (
@@ -94,14 +98,22 @@ export function PolicyIdsForm() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Input
-            label="Fulfillment policy ID"
+            label="Fulfillment policy — Standard (under £20)"
             value={form.fulfillment}
             onChange={e => set('fulfillment', e.target.value)}
             placeholder="12345678"
             maxLength={50}
-            hint="Shipping / dispatch policy"
+            hint="Royal Mail 2nd Class — used for cards under £20"
+          />
+          <Input
+            label="Fulfillment policy — Tracked (£20 and over)"
+            value={form.fulfillmentHigh}
+            onChange={e => set('fulfillmentHigh', e.target.value)}
+            placeholder="12345678"
+            maxLength={50}
+            hint="Royal Mail Tracked 48 — used for cards £20+"
           />
           <Input
             label="Payment policy ID"

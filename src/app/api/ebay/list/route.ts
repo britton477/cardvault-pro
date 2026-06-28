@@ -7,7 +7,7 @@ import { type NextRequest } from 'next/server'
 import { ZodError } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { requireAuth, ok, serverError, validationError } from '@/lib/api'
-import { listItem } from '@/lib/ebay'
+import { listItem, buildListingTitle, buildListingDescription } from '@/lib/ebay'
 import { EbayBulkListSchema } from '@/types/validation'
 import type { EbayListingResult } from '@/types'
 
@@ -45,22 +45,29 @@ export async function POST(request: NextRequest) {
         const photoUrls = (card['card_photos'] as Array<{ url: string }> ?? [])
           .map((p) => p.url)
 
-        const title = [
-          card['card_name'],
-          card['set_code'],
-          card['card_number'],
-          card['condition'],
-          card['foil_type'] !== 'Normal' ? card['foil_type'] : '',
-          card['is_graded'] ? `${card['grader']} ${card['grade']}` : '',
-        ].filter(Boolean).join(' ').slice(0, 80)
+        const cardData = {
+          card_name:   card['card_name']   as string,
+          set_code:    card['set_code']    as string,
+          card_number: card['card_number'] as string | null,
+          condition:   card['condition']   as string,
+          foil_type:   card['foil_type']   as string | null,
+          is_graded:   card['is_graded']   as boolean,
+          grader:      card['grader']      as string | null,
+          grade:       card['grade']       as string | null,
+          notes:       card['notes']       as string | null,
+        }
 
-        const description = `${card['card_name']} — ${card['set_code']} #${card['card_number']}
-Condition: ${card['condition']}
-${card['foil_type'] !== 'Normal' ? 'Foil: ' + card['foil_type'] : ''}
-${card['is_graded'] ? `Graded: ${card['grader']} ${card['grade']}` : ''}
-${card['notes'] ? '\n' + card['notes'] : ''}
+        const title       = buildListingTitle(cardData)
+        const description = buildListingDescription(
+          cardData,
+          list_price,
+          (settings['shop_name'] as string | null) ?? 'VaultHunters TCG',
+        )
 
-Listed via CardVault Pro`
+        // Select fulfillment policy: tracked (£20+) vs standard (under £20)
+        const fulfillmentPolicyId = list_price >= 20
+          ? ((settings['ebay_fulfillment_policy_id_high'] as string | null) ?? (settings['ebay_fulfillment_policy_id'] as string))
+          : (settings['ebay_fulfillment_policy_id'] as string)
 
         const listingId = await listItem({
           orgId,
@@ -70,10 +77,10 @@ Listed via CardVault Pro`
           price:                list_price,
           quantity:             1,
           photoUrls,
-          location:             settings['item_location'] as string ?? 'United Kingdom',
-          fulfillmentPolicyId:  settings['ebay_fulfillment_policy_id'] as string,
+          location:             (settings['item_location'] as string | null) ?? 'United Kingdom',
+          fulfillmentPolicyId,
           paymentPolicyId:      settings['ebay_payment_policy_id'] as string,
-          returnPolicyId:       settings['ebay_return_policy_id'] as string,
+          returnPolicyId:       settings['ebay_return_policy_id']  as string,
         })
 
         // Update card status + listing info

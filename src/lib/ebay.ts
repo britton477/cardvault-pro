@@ -586,6 +586,10 @@ export async function fetchSoldPrices(
   return raw
 }
 
+// ── Listing content helpers (re-exported from shared client-safe module) ───────
+export { buildListingTitle, buildListingDescription } from '@/lib/ebay-client'
+export type { ListingCardData }                       from '@/lib/ebay-client'
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function escapeXml(s: string): string {

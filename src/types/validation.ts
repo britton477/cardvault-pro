@@ -293,9 +293,10 @@ export const OrgSettingsSchema = z.object({
   shop_name:                    z.string().max(200),
   item_location:                z.string().max(100),
   ebay_username:                z.string().max(100),
-  ebay_fulfillment_policy_id:   z.string().max(50).nullish(),
-  ebay_payment_policy_id:       z.string().max(50).nullish(),
-  ebay_return_policy_id:        z.string().max(50).nullish(),
+  ebay_fulfillment_policy_id:      z.string().max(50).nullish(),
+  ebay_fulfillment_policy_id_high: z.string().max(50).nullish(),
+  ebay_payment_policy_id:          z.string().max(50).nullish(),
+  ebay_return_policy_id:           z.string().max(50).nullish(),
 })
 
 export const EbayCredentialsSchema = z.object({

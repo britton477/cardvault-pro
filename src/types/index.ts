@@ -41,10 +41,11 @@ export interface OrgSettings {
   shop_name:                    string
   item_location:                string
   ebay_username:                string
-  ebay_fulfillment_policy_id:   string | null
-  ebay_payment_policy_id:       string | null
-  ebay_return_policy_id:        string | null
-  updated_at:                   string
+  ebay_fulfillment_policy_id:      string | null
+  ebay_fulfillment_policy_id_high: string | null
+  ebay_payment_policy_id:          string | null
+  ebay_return_policy_id:           string | null
+  updated_at:                      string
 }
 
 export interface CardPhoto {

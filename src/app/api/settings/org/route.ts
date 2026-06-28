@@ -30,9 +30,10 @@ export async function GET() {
       shop_name:                  '',
       item_location:              '',
       ebay_username:              '',
-      ebay_fulfillment_policy_id: null,
-      ebay_payment_policy_id:     null,
-      ebay_return_policy_id:      null,
+      ebay_fulfillment_policy_id:      null,
+      ebay_fulfillment_policy_id_high: null,
+      ebay_payment_policy_id:          null,
+      ebay_return_policy_id:           null,
       updated_at:                 null,
     })
   } catch (err) {
