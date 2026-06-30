@@ -59,6 +59,11 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
   const qc        = useQueryClient()
   const { toast } = useToast()
 
+  // ── Drag-to-reorder state — MUST be declared before the useEffect that
+  //    references dragSourceId in its dependency array to avoid TDZ crash ──────
+  const [dragSourceId, setDragSourceId] = useState<string | null>(null)
+  const [dragOverId,   setDragOverId]   = useState<string | null>(null)
+
   // ── Sorted saved-photo order (optimistic during reorder) ──────────────────
   const [orderedPhotos, setOrderedPhotos] = useState<CardPhoto[]>([])
   useEffect(() => {
@@ -79,10 +84,6 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
   // ── Crop for EXISTING saved photos ────────────────────────────────────────
   const [cropExisting,    setCropExisting]    = useState<CardPhoto | null>(null)
   const [croppingPhotoId, setCroppingPhotoId] = useState<string | null>(null)
-
-  // ── Drag-to-reorder state ─────────────────────────────────────────────────
-  const [dragSourceId, setDragSourceId] = useState<string | null>(null)
-  const [dragOverId,   setDragOverId]   = useState<string | null>(null)
 
   // ── Delete state ──────────────────────────────────────────────────────────
   const [deletingId, setDeletingId] = useState<string | null>(null)
