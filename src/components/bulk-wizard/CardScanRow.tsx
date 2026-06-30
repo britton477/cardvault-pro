@@ -41,7 +41,7 @@ function StatusPill({ status, error }: { status: BulkWizardCard['status']; error
     identifying: 'Identifying…',
     pricing:     'Pricing…',
     ready:       'Ready',
-    error:       error ? `Error` : 'Error',
+    error:       'Error',
   }
 
   return (

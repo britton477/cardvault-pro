@@ -14,7 +14,7 @@
 // They are never written to localStorage, Supabase Storage, or any DB column.
 // =============================================================================
 import { useState, useCallback, useMemo, useRef } from 'react'
-import { resizeImageToBase64, fileToDataUrl }      from '@/lib/image'
+import { resizeImageToBase64 }                      from '@/lib/image'
 import type {
   BulkWizardCard,
   BulkWizardPhase,
@@ -129,12 +129,26 @@ export interface BulkWizardHook {
 }
 
 export function useBulkWizard(): BulkWizardHook {
-  const [cards,         setCards]         = useState<BulkWizardCard[]>([])
+  const [cards,         _setCards]        = useState<BulkWizardCard[]>([])
+  const cardsRef                          = useRef<BulkWizardCard[]>([])
   const [phase,         setPhase]         = useState<BulkWizardPhase>('scan')
   const [totalSpend,    setTotalSpend]    = useState(0)
   const [lockedSetCode, setLockedSetCode] = useState('')
   const [isImporting,   setIsImporting]   = useState(false)
   const [importError,   setImportError]   = useState<string | null>(null)
+
+  // Wrapper keeps cardsRef in sync so async callbacks can read current cards
+  // without triggering renders and without the state-as-getter antipattern.
+  const setCards = useCallback(
+    (updater: BulkWizardCard[] | ((prev: BulkWizardCard[]) => BulkWizardCard[])) => {
+      _setCards(prev => {
+        const next = typeof updater === 'function' ? updater(prev) : updater
+        cardsRef.current = next
+        return next
+      })
+    },
+    [],
+  )
 
   // Track in-flight identify count without triggering re-renders
   const inFlightRef = useRef(0)
@@ -144,19 +158,12 @@ export function useBulkWizard(): BulkWizardHook {
   // ── Card updater ──────────────────────────────────────────────────────────
   const updateCard = useCallback((uid: string, patch: Partial<BulkWizardCard>) => {
     setCards(prev => prev.map(c => c.uid === uid ? { ...c, ...patch } : c))
-  }, [])
+  }, [setCards])
 
   // ── Run the identify → price pipeline for one card ────────────────────────
   const runPipeline = useCallback(async (uid: string, setCodeOverride?: string) => {
-    // Fetch the current card data from state via a ref-like approach
-    // We use a functional update to read current state safely
-    let card: BulkWizardCard | undefined
-
-    setCards(prev => {
-      card = prev.find(c => c.uid === uid)
-      return prev
-    })
-
+    // Read current card directly from the ref — no render side-effect
+    const card = cardsRef.current.find(c => c.uid === uid)
     if (!card || card.status === 'ready') return
 
     inFlightRef.current++

@@ -51,11 +51,7 @@ export function BulkWizardView() {
   const wiz = useBulkWizard()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const canProceedToCost   = wiz.readyCount > 0
-  const canProceedToImport = wiz.readyCount > 0
-
-  // Effective cards to show (filter out queued-only rows with no image yet when in cost/import)
-  const displayCards = wiz.cards
+  const canProceed = wiz.readyCount > 0
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-0 -m-6">
@@ -135,7 +131,7 @@ export function BulkWizardView() {
             <ScanDropZone onFiles={wiz.addImages} disabled={false} />
 
             {/* Proceed CTA */}
-            {canProceedToCost && (
+            {canProceed && (
               <Button
                 className="w-full"
                 iconRight={<ArrowRight className="h-4 w-4" />}
@@ -169,7 +165,7 @@ export function BulkWizardView() {
               </div>
             ) : (
               <div className="space-y-2">
-                {displayCards.map((card, i) => (
+                {wiz.cards.map((card, i) => (
                   <CardScanRow
                     key={card.uid}
                     card={card}
@@ -200,7 +196,7 @@ export function BulkWizardView() {
               <div className="flex-1" />
               <Button
                 onClick={() => wiz.setPhase('import')}
-                disabled={!canProceedToImport}
+                disabled={!canProceed}
                 iconRight={<ArrowRight className="h-4 w-4" />}
               >
                 Review import →
@@ -226,6 +222,7 @@ export function BulkWizardView() {
             importError={wiz.importError}
             onImport={wiz.importAll}
             onBack={() => wiz.setPhase('cost')}
+            onClearAll={wiz.clearAll}
           />
         </div>
       )}

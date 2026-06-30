@@ -44,11 +44,11 @@ const BodySchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    // Rate limit: 5 imports per minute per org (each may create dozens of cards)
-    const limit = await rateLimit(request, 'bulk-import', { max: 5, window: '1m' })
-    if (!limit.success) return tooManyRequests(60)
-
     const { orgId, user } = await requireAuth()
+
+    // Rate limit: 5 imports per minute per org (each may create dozens of cards)
+    const limit = await rateLimit(request, `bulk-import:${orgId}`, { max: 5, window: '1m' })
+    if (!limit.success) return tooManyRequests(60)
 
     const body  = await request.json() as unknown
     const input = BodySchema.parse(body)

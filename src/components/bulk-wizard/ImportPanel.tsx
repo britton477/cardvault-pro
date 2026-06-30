@@ -20,6 +20,7 @@ interface ImportPanelProps {
   importError:    string | null
   onImport:       (opts: { lot_id?: string; source?: string }) => Promise<{ created: number }>
   onBack:         () => void
+  onClearAll:     () => void
 }
 
 export function ImportPanel({
@@ -29,6 +30,7 @@ export function ImportPanel({
   importError,
   onImport,
   onBack,
+  onClearAll,
 }: ImportPanelProps) {
   const router      = useRouter()
   const { data: lotsData } = useLots()
@@ -71,7 +73,7 @@ export function ImportPanel({
         <div className="flex items-center gap-3">
           <Button
             variant="secondary"
-            onClick={() => window.location.reload()}
+            onClick={onClearAll}
           >
             Scan more cards
           </Button>
