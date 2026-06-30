@@ -304,7 +304,8 @@ async function callTradingApi(
       'X-EBAY-API-APP-NAME':              appId,
       'X-EBAY-API-DEV-NAME':              'CardVaultPro',
       'X-EBAY-API-CERT-NAME':             '',
-      'X-EBAY-API-COMPATIBILITY-LEVEL':   '967',
+      'X-EBAY-API-COMPATIBILITY-LEVEL':   '1155',
+      'X-EBAY-API-IAF-TOKEN':             authToken,
     },
     body,
   })
@@ -343,47 +344,82 @@ export interface ListItemOptions {
   returnPolicyId:      string
 }
 
-// eBay condition IDs for Trading Card / Collectibles categories (e.g. 183454).
-// These categories reject the generic Used (3000) / VG (4000) etc. IDs and
-// require the collectibles grading vocabulary instead.
-// Source: eBay GetCategoryFeatures for category 183454
-const CONDITION_IDS: Record<string, string> = {
-  NM:     '2750',   // Like New
-  LP:     '2500',   // Very Good
-  MP:     '2000',   // Good
-  HP:     '1500',   // Acceptable
-  Sealed: '1000',   // New
+// ── eBay Trading API condition vocabulary for category 183454 (Pokémon TCG) ────
+//
+// ConditionID:
+//   4000 = Ungraded card (all raw conditions — NM/LP/MP/HP/Sealed)
+//   2750 = Professionally Graded
+//
+// For UNGRADED cards, the specific condition is communicated via ConditionDescriptor:
+//   Name=40001, Value=numeric card-condition ID:
+//     400010 = Near Mint (NM)
+//     400015 = Lightly Played / Excellent (LP)
+//     400016 = Moderately Played / Very Good (MP)
+//     400017 = Heavily Played / Poor (HP)
+//
+// For GRADED cards, two descriptors are sent:
+//   Name=27501 (Professional Grader):
+//     275010=PSA  275013=BGS  275015=CGC  2750119=ACE  2750123=Arkezon
+//   Name=27502 (Grade):
+//     275020=10  275021=9.5  275022=9  275023=8.5  275024=8  275025=7.5
+//     275026=7   275027=6.5  275028=6  275029=5.5  2750210=5  ...  2750218=1
+//
+// Source: verified against old working production app (ebay-proxy.js)
+
+const UNGRADED_COND_ID: Record<string, string> = {
+  NM:     '400010',
+  LP:     '400015',
+  MP:     '400016',
+  HP:     '400017',
+  Sealed: '400010',  // Sealed treated as NM-equivalent for descriptor
+}
+
+const GRADER_ID: Record<string, string> = {
+  PSA:     '275010',
+  BGS:     '275013',
+  CGC:     '275015',
+  ACE:     '2750119',
+  Arkezon: '2750123',
+}
+
+const GRADE_ID: Record<string, string> = {
+  '10':  '275020', '9.5': '275021', '9':   '275022', '8.5': '275023',
+  '8':   '275024', '7.5': '275025', '7':   '275026', '6.5': '275027',
+  '6':   '275028', '5.5': '275029', '5':   '2750210', '4.5': '2750211',
+  '4':   '2750212', '3.5': '2750213', '3':  '2750214', '2.5': '2750215',
+  '2':   '2750216', '1.5': '2750217', '1':  '2750218',
 }
 
 export async function listItem(opts: ListItemOptions): Promise<string> {
   const creds    = await getCredentials(opts.orgId)
   const token    = await getValidAccessToken(opts.orgId)
-  const condId   = CONDITION_IDS[opts.condition] ?? '2500'
+
+  const isGraded = opts.isGraded && !!opts.grader
+  const condId   = isGraded ? '2750' : '4000'
+
   const pictures = opts.photoUrls
     .map(u => `<PictureURL>${u}</PictureURL>`)
     .join('\n')
 
-  // ConditionDescriptors (field 27501 = Professional Grader) is only sent for graded cards.
-  // For raw/ungraded cards (condition IDs 1500-2750) eBay does not expect this block —
-  // "None" and similar values are not valid enumerated values.
-  // The previous 21920355 "required" error was a cascade from missing ItemSpecifics; now
-  // that Game=Pokémon TCG is present that error no longer appears for raw cards.
-  const conditionDescriptorsXml = (opts.isGraded && opts.grader)
-    ? `<ConditionDescriptors>
-      <ConditionDescriptor>
-        <Name>27501</Name>
-        <Value>${escapeXml(opts.grader)}</Value>
-      </ConditionDescriptor>${opts.grade ? `
-      <ConditionDescriptor>
-        <Name>27502</Name>
-        <Value>${escapeXml(opts.grade)}</Value>
-      </ConditionDescriptor>` : ''}
+  // ConditionDescriptors: always required in category 183454.
+  // Ungraded: Name=40001 with the specific card-condition numeric ID.
+  // Graded:   Name=27501 (grader numeric ID) + Name=27502 (grade numeric ID).
+  let conditionDescriptorsXml: string
+  if (isGraded && opts.grader) {
+    const graderId = GRADER_ID[opts.grader] ?? GRADER_ID['PSA']!
+    const gradeId  = opts.grade ? (GRADE_ID[opts.grade] ?? '') : ''
+    conditionDescriptorsXml = `<ConditionDescriptors>
+      <ConditionDescriptor><Name>27501</Name><Value>${graderId}</Value></ConditionDescriptor>${gradeId ? `
+      <ConditionDescriptor><Name>27502</Name><Value>${gradeId}</Value></ConditionDescriptor>` : ''}
     </ConditionDescriptors>`
-    : ''  // Raw/ungraded cards omit ConditionDescriptors entirely — condition IDs 1500-2750
-          // already communicate the card is ungraded. Sending this block with any placeholder
-          // value causes eBay error 21920352 (invalid enum value).
+  } else {
+    const cardCondId = UNGRADED_COND_ID[opts.condition] ?? UNGRADED_COND_ID['NM']!
+    conditionDescriptorsXml = `<ConditionDescriptors>
+      <ConditionDescriptor><Name>40001</Name><Value>${cardCondId}</Value></ConditionDescriptor>
+    </ConditionDescriptors>`
+  }
 
-  const xml = `${buildXmlHeader('AddItem', token)}
+  const xml = `${buildXmlHeader('AddFixedPriceItem', token)}
   <Item>
     <Title>${escapeXml(opts.title)}</Title>
     <Description><![CDATA[${opts.description}]]></Description>
@@ -392,10 +428,9 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     <ConditionID>${condId}</ConditionID>
     ${conditionDescriptorsXml}
     <ItemSpecifics>
-      <NameValueList>
-        <Name>Game</Name>
-        <Value>Pokémon TCG</Value>
-      </NameValueList>
+      <NameValueList><Name>Game</Name><Value>Pokémon</Value></NameValueList>
+      <NameValueList><Name>Graded</Name><Value>${isGraded ? 'Yes' : 'No'}</Value></NameValueList>
+      <NameValueList><Name>Card Name</Name><Value>${escapeXml(opts.title.split(' ').slice(0, 4).join(' '))}</Value></NameValueList>
     </ItemSpecifics>
     <Country>GB</Country>
     <Currency>GBP</Currency>
@@ -406,9 +441,9 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     <PictureDetails>${pictures}</PictureDetails>
     <Quantity>${opts.quantity}</Quantity>
     <SellerProfiles>
-      <SellerFulfillmentProfile>
-        <FulfillmentProfileID>${opts.fulfillmentPolicyId}</FulfillmentProfileID>
-      </SellerFulfillmentProfile>
+      <SellerShippingProfile>
+        <ShippingProfileID>${opts.fulfillmentPolicyId}</ShippingProfileID>
+      </SellerShippingProfile>
       <SellerPaymentProfile>
         <PaymentProfileID>${opts.paymentPolicyId}</PaymentProfileID>
       </SellerPaymentProfile>
@@ -417,9 +452,9 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
       </SellerReturnProfile>
     </SellerProfiles>
   </Item>
-</AddItemRequest>`
+</AddFixedPriceItemRequest>`
 
-  const response = await callTradingApi('AddItem', xml, token, creds.appId)
+  const response = await callTradingApi('AddFixedPriceItem', xml, token, creds.appId)
   return extractXmlField(response, 'ItemID')
 }
 
