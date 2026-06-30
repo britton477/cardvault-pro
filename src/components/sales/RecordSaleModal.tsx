@@ -25,16 +25,18 @@ import { CONDITIONS } from '@/components/stock/cardConstants'
 import type { Card, SalePlatform, SaleStatus } from '@/types'
 
 // ── Postage auto-fill ─────────────────────────────────────────────────────────
-// Royal Mail 2nd Class (under £20) or Tracked 48 (£20+)
+// Label costs (what the seller actually pays):
+//   Royal Mail 2nd Class = £0.91  (buyer charged £1.00)
+//   Royal Mail Tracked 48 = £2.85
 function autoShipping(soldPrice: number): string {
   if (soldPrice <= 0) return ''
-  return soldPrice < 20 ? '1.00' : '2.85'
+  return soldPrice < 20 ? '0.91' : '2.85'
 }
 
 function shippingLabel(soldPrice: number): string {
   return soldPrice > 0 && soldPrice < 20
-    ? 'Auto: Royal Mail 2nd Class'
-    : 'Auto: Royal Mail Tracked 48'
+    ? 'Auto: Royal Mail 2nd Class (£0.91)'
+    : 'Auto: Royal Mail Tracked 48 (£2.85)'
 }
 
 // ── eBay fees ─────────────────────────────────────────────────────────────────

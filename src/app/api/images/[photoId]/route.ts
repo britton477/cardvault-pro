@@ -17,7 +17,7 @@
 // =============================================================================
 import { type NextRequest } from 'next/server'
 import sharp                from 'sharp'
-import { createClient }     from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { requireAuth, ok, notFound, badRequest, serverError } from '@/lib/api'
 import { uploadCardImage, deleteCardImage } from '@/lib/storage'
 import { writeAuditLog }                   from '@/lib/audit'
@@ -113,12 +113,28 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const cardOrg = (photo.cards as unknown as { org_id: string }).org_id
     if (cardOrg !== orgId) return notFound()
 
-    // Fetch original image from storage (server-side: no CORS restrictions)
-    const originalRes = await fetch(photo.url)
-    if (!originalRes.ok) {
-      return serverError(new Error(`Failed to fetch original image (${originalRes.status})`))
+    // Fetch original image from storage.
+    // Supabase Storage public URLs can 404 server-side (bucket auth quirks) —
+    // use the admin client's download() instead for those. R2 + imgbb URLs are
+    // publicly accessible and can be fetched directly.
+    let originalBuffer: Buffer
+
+    const supabaseStoragePrefix = `${process.env['NEXT_PUBLIC_SUPABASE_URL']}/storage/v1/object/public/card-photos/`
+    if (photo.url.startsWith(supabaseStoragePrefix)) {
+      const admin = createAdminClient()
+      const key   = photo.url.replace(supabaseStoragePrefix, '')
+      const { data: blob, error: dlErr } = await admin.storage.from('card-photos').download(key)
+      if (dlErr || !blob) {
+        return serverError(new Error(`Failed to download from storage: ${dlErr?.message ?? 'unknown'}`))
+      }
+      originalBuffer = Buffer.from(await blob.arrayBuffer())
+    } else {
+      const originalRes = await fetch(photo.url)
+      if (!originalRes.ok) {
+        return serverError(new Error(`Failed to fetch original image (${originalRes.status})`))
+      }
+      originalBuffer = Buffer.from(await originalRes.arrayBuffer())
     }
-    const originalBuffer = Buffer.from(await originalRes.arrayBuffer())
 
     // Get natural dimensions
     const meta = await sharp(originalBuffer).metadata()

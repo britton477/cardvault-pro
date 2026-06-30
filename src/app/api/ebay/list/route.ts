@@ -74,6 +74,8 @@ export async function POST(request: NextRequest) {
           title,
           description,
           condition:            card['condition'] as string,
+          isGraded:             (card['is_graded'] as boolean) ?? false,
+          grader:               card['grader'] as string | null,
           price:                list_price,
           quantity:             1,
           photoUrls,

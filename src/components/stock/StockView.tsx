@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash } from 'lucide-react'
+import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash, ShoppingBag, Tag } from 'lucide-react'
 import { useQueryClient }                    from '@tanstack/react-query'
 import { useCards, useBulkCardAction }      from '@/hooks/useCards'
 import { useBulkEbayList }                   from '@/hooks/useEbayListings'
@@ -78,6 +78,10 @@ export function StockView() {
   // ebayCards: when user clicks "List on eBay" for a single row, we list just that card
   const [ebayModalCards,   setEbayModalCards]   = useState<Card[]>([])
   const [ebayListCard,     setEbayListCard]     = useState<Card | null>(null)
+
+  // Platform picker: opened by "List item" button — rendered as fixed overlay to avoid
+  // overflow-x-auto stacking context clipping the dropdown inside the table.
+  const [listItemCard,     setListItemCard]     = useState<Card | null>(null)
 
   const { data: orgSettings } = useOrgSettings()
 
@@ -480,10 +484,9 @@ export function StockView() {
         showCardNumber={showCardNumber}
         pendingIds={statusPendingIds}
         pricePendingIds={pricePendingIds}
-        onQuickStatus={(card) => { void handleQuickStatus(card) }}
+        onListItem={(card) => setListItemCard(card)}
         onDirectEdit={(card) => setDirectEditCard(card)}
         onRecordSale={handleRecordSaleForCard}
-        onListEbay={handleListEbayCard}
         onRefreshPrice={(card) => { void handleRefreshSinglePrice(card) }}
       />
 
@@ -558,6 +561,37 @@ export function StockView() {
         card={directEditCard}
         onClose={() => setDirectEditCard(null)}
       />
+
+      {/* Platform picker — fixed overlay so it's never clipped by overflow-x-auto */}
+      {listItemCard && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setListItemCard(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+            <div className="pointer-events-auto min-w-[180px] rounded-lg border border-border bg-card shadow-xl py-1.5 text-sm">
+              <p className="px-3 py-1 text-xs font-medium text-muted-foreground truncate max-w-[220px]">
+                {listItemCard.card_name}
+              </p>
+              <div className="my-1 border-t border-border" />
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
+                onClick={() => { const c = listItemCard; setListItemCard(null); handleListEbayCard(c) }}
+              >
+                <ShoppingBag className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                List on eBay
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
+                onClick={() => { const c = listItemCard; setListItemCard(null); void handleQuickStatus(c) }}
+              >
+                <Tag className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                Other platform
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Pagination */}
       {totalPages > 1 && (

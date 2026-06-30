@@ -331,6 +331,8 @@ export interface ListItemOptions {
   title:               string
   description:         string
   condition:           string
+  isGraded?:           boolean       // true = professionally graded card
+  grader?:             string | null // e.g. 'PSA', 'BGS', 'CGC'
   price:               number
   quantity:            number
   photoUrls:           string[]
@@ -360,6 +362,10 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     .map(u => `<PictureURL>${u}</PictureURL>`)
     .join('\n')
 
+  // Professional Grader condition descriptor — required by eBay for category 183454.
+  // Field 27501 = "Professional Grader". Value = grader name or "None" for ungraded cards.
+  const profGrader = (opts.isGraded && opts.grader) ? escapeXml(opts.grader) : 'None'
+
   const xml = `${buildXmlHeader('AddItem', token)}
   <Item>
     <Title>${escapeXml(opts.title)}</Title>
@@ -367,6 +373,18 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>
     <StartPrice>${opts.price.toFixed(2)}</StartPrice>
     <ConditionID>${condId}</ConditionID>
+    <ConditionDescriptors>
+      <ConditionDescriptor>
+        <Name>27501</Name>
+        <Value>${profGrader}</Value>
+      </ConditionDescriptor>
+    </ConditionDescriptors>
+    <ItemSpecifics>
+      <NameValueList>
+        <Name>Game</Name>
+        <Value>Pokémon TCG</Value>
+      </NameValueList>
+    </ItemSpecifics>
     <Country>GB</Country>
     <Currency>GBP</Currency>
     <DispatchTimeMax>3</DispatchTimeMax>
