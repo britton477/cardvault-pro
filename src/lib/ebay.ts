@@ -333,6 +333,7 @@ export interface ListItemOptions {
   condition:           string
   isGraded?:           boolean       // true = professionally graded card
   grader?:             string | null // e.g. 'PSA', 'BGS', 'CGC'
+  grade?:              string | null // e.g. '10', '9.5' — used as ConditionDescriptor 27502
   price:               number
   quantity:            number
   photoUrls:           string[]
@@ -372,9 +373,15 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
       <ConditionDescriptor>
         <Name>27501</Name>
         <Value>${escapeXml(opts.grader)}</Value>
-      </ConditionDescriptor>
+      </ConditionDescriptor>${opts.grade ? `
+      <ConditionDescriptor>
+        <Name>27502</Name>
+        <Value>${escapeXml(opts.grade)}</Value>
+      </ConditionDescriptor>` : ''}
     </ConditionDescriptors>`
-    : ''
+    : ''  // Raw/ungraded cards omit ConditionDescriptors entirely — condition IDs 1500-2750
+          // already communicate the card is ungraded. Sending this block with any placeholder
+          // value causes eBay error 21920352 (invalid enum value).
 
   const xml = `${buildXmlHeader('AddItem', token)}
   <Item>
