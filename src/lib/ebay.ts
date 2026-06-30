@@ -362,9 +362,19 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     .map(u => `<PictureURL>${u}</PictureURL>`)
     .join('\n')
 
-  // Professional Grader condition descriptor — required by eBay for category 183454.
-  // Field 27501 = "Professional Grader". Value = grader name or "None" for ungraded cards.
-  const profGrader = (opts.isGraded && opts.grader) ? escapeXml(opts.grader) : 'None'
+  // ConditionDescriptors (field 27501 = Professional Grader) is only sent for graded cards.
+  // For raw/ungraded cards (condition IDs 1500-2750) eBay does not expect this block —
+  // "None" and similar values are not valid enumerated values.
+  // The previous 21920355 "required" error was a cascade from missing ItemSpecifics; now
+  // that Game=Pokémon TCG is present that error no longer appears for raw cards.
+  const conditionDescriptorsXml = (opts.isGraded && opts.grader)
+    ? `<ConditionDescriptors>
+      <ConditionDescriptor>
+        <Name>27501</Name>
+        <Value>${escapeXml(opts.grader)}</Value>
+      </ConditionDescriptor>
+    </ConditionDescriptors>`
+    : ''
 
   const xml = `${buildXmlHeader('AddItem', token)}
   <Item>
@@ -373,12 +383,7 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>
     <StartPrice>${opts.price.toFixed(2)}</StartPrice>
     <ConditionID>${condId}</ConditionID>
-    <ConditionDescriptors>
-      <ConditionDescriptor>
-        <Name>27501</Name>
-        <Value>${profGrader}</Value>
-      </ConditionDescriptor>
-    </ConditionDescriptors>
+    ${conditionDescriptorsXml}
     <ItemSpecifics>
       <NameValueList>
         <Name>Game</Name>
