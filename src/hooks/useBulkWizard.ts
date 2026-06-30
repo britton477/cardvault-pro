@@ -267,8 +267,15 @@ export function useBulkWizard(): BulkWizardHook {
           const base64    = await resizeImageToBase64(file)
           const dataUrl   = `data:image/jpeg;base64,${base64}`
 
-          // Store the resized preview and the raw base64 for the API
-          // We reuse imageDataUrl for both (it IS the base64, with the prefix stripped when sending)
+          // Store the resized preview and the raw base64 for the API.
+          // We reuse imageDataUrl for both (it IS the base64, with the prefix stripped when sending).
+          // IMPORTANT: update cardsRef synchronously BEFORE calling schedule() so that
+          // runPipeline() immediately reads the correct imageDataUrl from the ref.
+          // setCards() schedules an async React state update — cardsRef would still
+          // hold imageDataUrl:'' when runPipeline() runs if we relied on that alone.
+          cardsRef.current = cardsRef.current.map(c =>
+            c.uid === uid ? { ...c, imageDataUrl: dataUrl } : c
+          )
           setCards(prev => prev.map(c =>
             c.uid === uid ? { ...c, imageDataUrl: dataUrl } : c
           ))

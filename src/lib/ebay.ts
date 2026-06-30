@@ -342,6 +342,11 @@ export interface ListItemOptions {
   fulfillmentPolicyId: string
   paymentPolicyId:     string
   returnPolicyId:      string
+  // Item specifics — passed directly to eBay ItemSpecifics for better search indexing
+  cardName?:           string | null // Actual card name (e.g. "Charizard")
+  setCode?:            string | null // Set code (e.g. "SVI", "OBF")
+  cardNumber?:         string | null // Card number (e.g. "006/198")
+  language?:           string | null // Language code (e.g. "EN", "JP")
 }
 
 // ── eBay Trading API condition vocabulary for category 183454 (Pokémon TCG) ────
@@ -429,8 +434,12 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     ${conditionDescriptorsXml}
     <ItemSpecifics>
       <NameValueList><Name>Game</Name><Value>Pokémon</Value></NameValueList>
-      <NameValueList><Name>Graded</Name><Value>${isGraded ? 'Yes' : 'No'}</Value></NameValueList>
-      <NameValueList><Name>Card Name</Name><Value>${escapeXml(opts.title.split(' ').slice(0, 4).join(' '))}</Value></NameValueList>
+      <NameValueList><Name>Graded</Name><Value>${isGraded ? 'Yes' : 'No'}</Value></NameValueList>${opts.cardName ? `
+      <NameValueList><Name>Card Name</Name><Value>${escapeXml(opts.cardName)}</Value></NameValueList>` : ''}${opts.setCode ? `
+      <NameValueList><Name>Set</Name><Value>${escapeXml(opts.setCode)}</Value></NameValueList>` : ''}${opts.cardNumber ? `
+      <NameValueList><Name>Card Number</Name><Value>${escapeXml(opts.cardNumber)}</Value></NameValueList>` : ''}${opts.language ? `
+      <NameValueList><Name>Language</Name><Value>${escapeXml(opts.language === 'EN' ? 'English' : opts.language === 'JP' ? 'Japanese' : opts.language === 'DE' ? 'German' : opts.language === 'FR' ? 'French' : opts.language === 'ES' ? 'Spanish' : opts.language === 'IT' ? 'Italian' : opts.language === 'PT' ? 'Portuguese' : opts.language === 'KO' ? 'Korean' : opts.language)}</Value></NameValueList>` : ''}
+      <NameValueList><Name>Type</Name><Value>Individual Cards</Value></NameValueList>
     </ItemSpecifics>
     <Country>GB</Country>
     <Currency>GBP</Currency>

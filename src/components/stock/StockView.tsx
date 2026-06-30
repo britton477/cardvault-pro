@@ -283,7 +283,10 @@ export function StockView() {
       if (card.card_number) qs.set('card_number', card.card_number)
       if (card.condition)   qs.set('condition',   card.condition)
       const res  = await fetch(`/api/ebay/price?${qs}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const errBody = await res.json() as { error?: string }
+        throw new Error(errBody.error ?? `Price lookup failed (HTTP ${res.status})`)
+      }
       const json = await res.json() as { median_price?: number | null }
       if (json.median_price == null) {
         toast.info('No price found', `Couldn't find recent sales for ${card.card_name}`)

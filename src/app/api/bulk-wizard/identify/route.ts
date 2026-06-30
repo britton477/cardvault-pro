@@ -33,20 +33,34 @@ const BodySchema = z.object({
 
 // Structured extraction prompt — instructs the model to return JSON only.
 // Deliberately terse to keep token count low (haiku pricing is per-token).
-const SYSTEM_PROMPT = `You are a Pokémon trading card expert. Given a photo of a card, extract the following fields and return ONLY valid JSON with no markdown, no explanation:
+const SYSTEM_PROMPT = `You are an expert Pokémon TCG card identifier. Given a photo of a Pokémon card, extract the following fields and return ONLY valid JSON with no markdown, no explanation, no surrounding text:
 
 {
-  "card_name":   "<name printed on the card, English>",
-  "set_code":    "<set symbol code, e.g. SV01, CRI, OBF — leave empty string if unclear>",
-  "card_number": "<number printed bottom-right, e.g. 025/198 or 025 — leave empty string if unclear>",
-  "condition":   "<NM | LP | MP | HP — your best visual assessment>",
-  "foil_type":   "<Normal | Holo | Reverse Holo | Full Art | Secret Rare | Special Illustration Rare | Hyper Rare>",
+  "card_name":   "<name printed at the top of the card in English — e.g. 'Charizard', 'Misty\\'s Psyduck'>",
+  "set_code":    "<3–6 character set code from the bottom-left set symbol — e.g. 'SVI', 'PAL', 'OBF', 'MEW', 'TWM', 'SHF', 'CRZ', 'LOR', 'ASR' — leave empty string ONLY if the symbol is completely obscured>",
+  "card_number": "<number printed at bottom-right, e.g. '025/198', '006/165', 'TG01/TG30' — leave empty string if not visible>",
+  "condition":   "<NM | LP | MP | HP>",
+  "foil_type":   "<Normal | Holo | Reverse Holo | Full Art | Secret Rare | Special Illustration Rare | Hyper Rare | Illustration Rare>",
   "language":    "<EN | JP | DE | FR | ES | IT | PT | KO | ZH>",
-  "confidence":  <0.0–1.0 float, how certain you are of the card_name>
+  "confidence":  <0.0–1.0 float, how certain you are of the card_name and set_code>
 }
 
-Rules:
-- card_name must be the English card name even if the card is in another language
+Condition grading rules (apply strictly):
+- NM (Near Mint): No visible wear. Edges crisp, surface clean, no scratches. DEFAULT for cards that look good.
+- LP (Lightly Played): Minor edge whitening on 1–2 corners, very faint scratches. Must be clearly visible.
+- MP (Moderately Played): Obvious edge wear on multiple corners, noticeable scratches or scuffs.
+- HP (Heavily Played): Severe edge wear, creases, heavy scratching, or bent corners.
+→ Default to NM unless you can clearly see wear. A card photographed cleanly on a flat surface is almost certainly NM.
+
+Set code rules:
+- Look at the small symbol in the bottom-left corner of the card — every modern card has one.
+- Match it to known Scarlet & Violet era codes: SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE
+- Match it to Sword & Shield era: BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SHF, CEL
+- Match it to Sun & Moon era: SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
+- If you can read any letters on the symbol itself, include them. Leave empty only if truly unreadable.
+
+Additional rules:
+- card_name must be the English name even if the card is in another language
 - If you cannot identify the card at all, set confidence to 0.1 and card_name to "Unknown"
 - Never output anything outside the JSON object`
 
@@ -96,7 +110,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model:      'claude-haiku-4-5-20251001',
-        max_tokens: 256,
+        max_tokens: 300,
         system:     SYSTEM_PROMPT,
         messages,
       }),

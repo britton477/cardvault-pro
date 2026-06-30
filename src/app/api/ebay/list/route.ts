@@ -84,6 +84,11 @@ export async function POST(request: NextRequest) {
           fulfillmentPolicyId,
           paymentPolicyId:      settings['ebay_payment_policy_id'] as string,
           returnPolicyId:       settings['ebay_return_policy_id']  as string,
+          // Item specifics for better eBay search indexing
+          cardName:             card['card_name']   as string | null,
+          setCode:              card['set_code']    as string | null,
+          cardNumber:           card['card_number'] as string | null,
+          language:             card['language']    as string | null,
         })
 
         // Update card status + listing info
