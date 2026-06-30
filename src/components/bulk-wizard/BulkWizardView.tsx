@@ -153,7 +153,7 @@ export function BulkWizardView() {
 
           {/* Right: identified card list */}
           <div className="flex-1 overflow-y-auto p-5">
-            {displayCards.length === 0 ? (
+            {wiz.cards.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
                 <span className="text-6xl opacity-10">🃏</span>
                 <div>

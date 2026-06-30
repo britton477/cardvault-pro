@@ -11,7 +11,7 @@
 // The "buyer pays" figure is shown for reference — actual fee varies.
 // =============================================================================
 import { useState, useEffect, useRef } from 'react'
-import { X, ExternalLink, ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertTriangle, Truck } from 'lucide-react'
+import { X, ExternalLink, ChevronDown, ChevronUp, Loader2, CheckCircle2, AlertTriangle, Truck, ImageOff } from 'lucide-react'
 import { cn }           from '@/lib/utils'
 import { formatGBP }    from '@/lib/utils'
 import type { Card }    from '@/types'
@@ -122,11 +122,12 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
 
   if (!open || !card) return null
 
-  const price      = Number(priceInput) || 0
-  const bpFee      = calcBuyerProtectionFee(price)
-  const buyerPays  = Math.round((price + bpFee) * 100) / 100
+  const price       = Number(priceInput) || 0
+  const bpFee       = calcBuyerProtectionFee(price)
+  const buyerPays   = Math.round((price + bpFee) * 100) / 100
   const isHighValue = price >= 20
   const priceValid  = price > 0
+  const hasNoPhotos = Array.isArray(card.photos) && card.photos.length === 0
 
   async function handleList() {
     if (!priceValid) return
@@ -282,6 +283,16 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
                       className="w-full px-3 py-2 rounded-md border border-border bg-input text-foreground text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring resize-y"
                     />
                   )}
+                </div>
+              )}
+
+              {/* No-photo warning */}
+              {hasNoPhotos && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-sm">
+                  <ImageOff className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-amber-300/90 text-xs leading-snug">
+                    This card has no photos. eBay recommends at least one photo. You can still list, but it may affect visibility.
+                  </p>
                 </div>
               )}
 

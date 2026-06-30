@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
         if (!card) throw new Error('Card not found')
 
-        const photoUrls = (card['card_photos'] as Array<{ url: string }> ?? [])
+        const photoUrls = (card['photos'] as Array<{ url: string }> ?? [])
           .map((p) => p.url)
 
         const cardData = {

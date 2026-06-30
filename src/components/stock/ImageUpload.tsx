@@ -62,9 +62,12 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
   // ── Sorted saved-photo order (optimistic during reorder) ──────────────────
   const [orderedPhotos, setOrderedPhotos] = useState<CardPhoto[]>([])
   useEffect(() => {
-    // Only update if not mid-drag (dragSourceId acts as the guard)
+    // Guard: don't reset order while a drag-reorder is in flight.
+    // dragSourceId stays set until the reorder API call resolves,
+    // preventing the effect from reverting the optimistic update.
+    if (dragSourceId) return
     setOrderedPhotos([...photos].sort((a, b) => a.position - b.position))
-  }, [photos])
+  }, [photos, dragSourceId])
 
   // ── Upload queue ──────────────────────────────────────────────────────────
   const [uploads, setUploads] = useState<UploadItem[]>([])
@@ -264,9 +267,9 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
     const [moved]  = newOrder.splice(srcIdx, 1)
     newOrder.splice(tgtIdx, 0, moved)
 
-    // Optimistic update
+    // Optimistic update — keep dragSourceId set until API resolves so the
+    // useEffect guard doesn't reset orderedPhotos back to old positions.
     setOrderedPhotos(newOrder)
-    setDragSourceId(null)
     setDragOverId(null)
 
     const updates = newOrder.map((p, i) => ({ id: p.id, position: i }))
@@ -279,8 +282,10 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
       if (!res.ok) throw new Error('Reorder failed')
       qc.invalidateQueries({ queryKey: ['cards'] })
     } catch (err) {
-      setOrderedPhotos(current)  // revert
+      setOrderedPhotos(current)  // revert on failure
       toast.error('Failed to reorder photos', err instanceof Error ? err.message : undefined)
+    } finally {
+      setDragSourceId(null)  // clear only after API resolves
     }
   }
 

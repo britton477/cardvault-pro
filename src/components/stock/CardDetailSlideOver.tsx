@@ -77,7 +77,10 @@ export function CardDetailSlideOver({ card, onClose }: CardDetailSlideOverProps)
       if (card.card_number) qs.set('card_number', card.card_number)
       if (card.condition)   qs.set('condition',   card.condition)
       const res = await fetch(`/api/ebay/price?${qs}`)
-      if (!res.ok) throw new Error('Price lookup failed')
+      if (!res.ok) {
+        const errBody = await res.json() as { error?: string }
+        throw new Error(errBody.error ?? 'Price lookup failed')
+      }
       const data = await res.json() as EbayPriceResult
       if (data.median_price == null) {
         toast.info('No price data', `No recent eBay sales found for "${card.card_name}"`)

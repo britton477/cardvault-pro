@@ -154,7 +154,7 @@ export function StockTable({
             {!isLoading && !isError && cards.map(card => {
               const thumb      = card.photos?.[0]?.thumb_url ?? card.photos?.[0]?.url
               const isSelected = bulkEnabled && selectedIds!.has(card.id)
-              const ebaySearch = `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent([card.card_name, card.set_code].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`
+              const ebaySearch = `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent([card.card_name, card.set_code, card.card_number].filter(Boolean).join(' '))}&LH_Complete=1&LH_Sold=1`
 
               return (
                 <tr
