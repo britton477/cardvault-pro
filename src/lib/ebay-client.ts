@@ -55,8 +55,8 @@ export function buildListingDescription(
   const isHighValue = price >= 20
 
   const shippingDesc = isHighValue
-    ? 'Royal Mail Tracked 48 — buyer pays shipping. Every order is carefully packaged with protective sleeves and rigid cardboard to ensure your card arrives safely.'
-    : 'Royal Mail 2nd Class — buyer pays shipping. Every order is carefully packaged with protective sleeves and rigid cardboard to ensure your card arrives safely.'
+    ? 'Royal Mail Tracked 48 — buyer pays shipping. Every order is carefully packaged to ensure your card arrives safely and in the condition described.'
+    : 'Royal Mail 2nd Class — buyer pays shipping. Every order is carefully packaged to ensure your card arrives safely and in the condition described.'
 
   const setLine = [card.set_code, card.card_number ? `#${card.card_number}` : null].filter(Boolean).join(' / ')
 
@@ -76,7 +76,7 @@ export function buildListingDescription(
 
   return `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #222; max-width: 680px;">
 
-<h2 style="font-size: 18px; margin-bottom: 4px;">&#x1F3CF; ${card.card_name}</h2>
+<h2 style="font-size: 18px; margin-bottom: 4px;">&#x1F0CF; ${card.card_name}</h2>
 <p style="color: #555; margin-top: 0;">${shopName} &mdash; UK Pok&eacute;mon Card Seller</p>
 
 <hr style="border: none; border-top: 1px solid #ddd; margin: 12px 0;" />

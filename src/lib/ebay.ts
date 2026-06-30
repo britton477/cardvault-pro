@@ -630,8 +630,21 @@ export async function fetchSoldPrices(
     })
   }
 
-  const res = await fetch(`${URLS.finding}?${params}`)
-  if (!res.ok) throw new Error(`eBay Finding API error: HTTP ${res.status}`)
+  // Retry up to 2 times on transient 5xx errors (eBay Finding API returns 503
+  // occasionally under load; a short back-off recovers most of the time).
+  let res: Response | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
+    res = await fetch(`${URLS.finding}?${params}`)
+    if (res.ok || res.status < 500) break
+  }
+  if (!res!.ok) {
+    throw new Error(
+      res!.status === 503
+        ? 'eBay price service temporarily unavailable — please try again in a moment'
+        : `eBay Finding API error: HTTP ${res!.status}`,
+    )
+  }
 
   const json = await res.json() as {
     findCompletedItemsResponse?: [{

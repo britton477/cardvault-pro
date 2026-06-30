@@ -144,10 +144,17 @@ export function StockView() {
   }, [data?.count, selectedIds.size, setHeader])
 
   // Derive selectedCard from live query data so photos update immediately after upload.
+  // NOTE: we use useEffect (not render-time setState) to sync lastCard — calling setState
+  // during render causes an infinite loop when TanStack Query produces new object
+  // references after a background refetch, because liveCard !== lastCard stays true
+  // every render and React keeps re-rendering until it throws "Maximum update depth exceeded".
   const [lastCard, setLastCard] = useState<Card | null>(null)
   const liveCard = selectedCardId ? currentPageCards.find(c => c.id === selectedCardId) : undefined
-  if (liveCard && liveCard !== lastCard) setLastCard(liveCard)
   const selectedCard = selectedCardId ? (liveCard ?? lastCard) : null
+
+  useEffect(() => {
+    if (liveCard) setLastCard(liveCard)
+  }, [liveCard])
 
   // ── Filter helpers ────────────────────────────────────────────────────────
 
