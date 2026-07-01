@@ -36,6 +36,10 @@ export async function GET(request: NextRequest) {
       .digest('hex')
 
     // Two-tier cache: Redis (fast, in-memory) → Postgres price_cache (persistent 24h)
+    //
+    // IMPORTANT: we only cache non-null results. If no eBay listings were found
+    // (median_price = null), we skip both the DB write and the Redis write so the
+    // next "Refresh" re-queries eBay rather than returning the stale null for 24h.
     const result = await withCache(
       `ebay-price:${queryHash}`,
       60 * 60 * 24, // 24h Redis TTL, matching DB cache
@@ -48,11 +52,14 @@ export async function GET(request: NextRequest) {
           .gt('expires_at', new Date().toISOString())
           .single()
 
-        if (cached) {
+        // Only use the cached entry when it has actual price data.
+        // A cached null means a previous lookup found no listings — don't
+        // serve that stale miss; fall through to re-query eBay.
+        if (cached && cached.median_price != null) {
           return {
             card_name:    cached.card_name as string,
             set_code:     cached.set_code as string,
-            median_price: cached.median_price as number | null,
+            median_price: cached.median_price as number,
             prices:       (cached.prices as number[]) ?? [],
             price_count:  cached.price_count as number,
             cached:       true,
@@ -64,18 +71,21 @@ export async function GET(request: NextRequest) {
         const prices   = listings.map((l: { price: number }) => l.price).filter((p: number) => p > 0)
         const med      = median(prices)
 
-        // Persist to Postgres cache for resilience (survives Redis flushes)
-        await db.from('price_cache').upsert({
-          query_hash:   queryHash,
-          card_name:    query.card_name,
-          set_code:     query.set_code ?? '',
-          condition:    query.condition ?? null,
-          median_price: med,
-          price_count:  prices.length,
-          prices,
-          fetched_at:   new Date().toISOString(),
-          expires_at:   new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        })
+        // Only persist to Postgres when we have real price data.
+        // Caching null would block retries for 24h even if listings appear later.
+        if (med != null) {
+          await db.from('price_cache').upsert({
+            query_hash:   queryHash,
+            card_name:    query.card_name,
+            set_code:     query.set_code ?? '',
+            condition:    query.condition ?? null,
+            median_price: med,
+            price_count:  prices.length,
+            prices,
+            fetched_at:   new Date().toISOString(),
+            expires_at:   new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          })
+        }
 
         return {
           card_name:    query.card_name,
@@ -86,7 +96,9 @@ export async function GET(request: NextRequest) {
           price_count:  prices.length,
           cached:       false,
         }
-      }
+      },
+      // Only write to Redis when we actually have price data
+      (data) => data.median_price != null,
     )
 
     return ok(result)

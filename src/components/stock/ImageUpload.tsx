@@ -59,20 +59,23 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
   const qc        = useQueryClient()
   const { toast } = useToast()
 
-  // ── Drag-to-reorder state — MUST be declared before the useEffect that
-  //    references dragSourceId in its dependency array to avoid TDZ crash ──────
+  // ── Drag-to-reorder state ─────────────────────────────────────────────────
   const [dragSourceId, setDragSourceId] = useState<string | null>(null)
   const [dragOverId,   setDragOverId]   = useState<string | null>(null)
+
+  // Ref-based guard: stays true from the moment we start the reorder API call
+  // until it resolves. Using a ref (not state) means onDragEnd can safely clear
+  // dragSourceId for visual cleanup without triggering the useEffect below.
+  const reorderInFlightRef = useRef(false)
 
   // ── Sorted saved-photo order (optimistic during reorder) ──────────────────
   const [orderedPhotos, setOrderedPhotos] = useState<CardPhoto[]>([])
   useEffect(() => {
-    // Guard: don't reset order while a drag-reorder is in flight.
-    // dragSourceId stays set until the reorder API call resolves,
-    // preventing the effect from reverting the optimistic update.
-    if (dragSourceId) return
+    // Don't reset order while a reorder API call is in flight — that would
+    // revert the optimistic update before the server has confirmed.
+    if (reorderInFlightRef.current) return
     setOrderedPhotos([...photos].sort((a, b) => a.position - b.position))
-  }, [photos, dragSourceId])
+  }, [photos])
 
   // ── Upload queue ──────────────────────────────────────────────────────────
   const [uploads, setUploads] = useState<UploadItem[]>([])
@@ -268,11 +271,13 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
     const [moved]  = newOrder.splice(srcIdx, 1)
     newOrder.splice(tgtIdx, 0, moved)
 
-    // Optimistic update — keep dragSourceId set until API resolves so the
-    // useEffect guard doesn't reset orderedPhotos back to old positions.
+    // Optimistic update.
     setOrderedPhotos(newOrder)
     setDragOverId(null)
 
+    // Set the ref BEFORE the await so the useEffect guard holds even after
+    // onDragEnd fires synchronously and clears dragSourceId state.
+    reorderInFlightRef.current = true
     const updates = newOrder.map((p, i) => ({ id: p.id, position: i }))
     try {
       const res = await fetch('/api/images/reorder', {
@@ -286,7 +291,8 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
       setOrderedPhotos(current)  // revert on failure
       toast.error('Failed to reorder photos', err instanceof Error ? err.message : undefined)
     } finally {
-      setDragSourceId(null)  // clear only after API resolves
+      reorderInFlightRef.current = false
+      setDragSourceId(null)
     }
   }
 

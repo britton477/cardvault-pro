@@ -30,14 +30,20 @@ async function getRedis() {
  * Cache-aside pattern. Returns cached value if present, otherwise calls
  * fetcher, stores the result, and returns it.
  *
- * @param key    Unique cache key (use org-scoped keys to prevent data leakage)
- * @param ttlSec Time-to-live in seconds
- * @param fetcher Async function that returns the data to cache
+ * @param key         Unique cache key (use org-scoped keys to prevent data leakage)
+ * @param ttlSec      Time-to-live in seconds
+ * @param fetcher     Async function that returns the data to cache
+ * @param shouldCache Optional predicate — if provided and returns false for the
+ *                    fetched value, the result is returned but NOT written to cache.
+ *                    Use this to skip caching empty/null results (e.g. eBay price
+ *                    lookups that found no listings should not be cached for 24h,
+ *                    because listings may appear later).
  */
 export async function withCache<T>(
   key: string,
   ttlSec: number,
-  fetcher: () => Promise<T>
+  fetcher: () => Promise<T>,
+  shouldCache?: (data: T) => boolean,
 ): Promise<T> {
   const redis = await getRedis()
 
@@ -53,7 +59,8 @@ export async function withCache<T>(
 
   const data = await fetcher()
 
-  if (redis) {
+  const cacheable = shouldCache === undefined || shouldCache(data)
+  if (redis && cacheable) {
     try {
       await redis.setex(key, ttlSec, JSON.stringify(data))
     } catch (err) {
