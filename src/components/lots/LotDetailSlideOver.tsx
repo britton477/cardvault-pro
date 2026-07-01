@@ -38,7 +38,8 @@ function CardRow({
   costPerCard: number
   onRemove:    (c: Card) => void
 }) {
-  const thumb = card.photos?.[0]?.thumb_url ?? card.photos?.[0]?.url
+  const cover = card.photos?.slice().sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]
+  const thumb = cover?.thumb_url ?? cover?.url
 
   return (
     <tr className="border-b border-border last:border-0 hover:bg-secondary/30 transition-colors group">
