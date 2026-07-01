@@ -22,9 +22,9 @@ const URLS = {
   trading:    IS_SANDBOX
     ? 'https://api.sandbox.ebay.com/ws/api.dll'
     : 'https://api.ebay.com/ws/api.dll',
-  finding:    IS_SANDBOX
-    ? 'https://svcs.sandbox.ebay.com/services/search/FindingService/v1'
-    : 'https://svcs.ebay.com/services/search/FindingService/v1',
+  browse:     IS_SANDBOX
+    ? 'https://api.sandbox.ebay.com/buy/browse/v1/item_summary/search'
+    : 'https://api.ebay.com/buy/browse/v1/item_summary/search',
   oauthBase:  IS_SANDBOX
     ? 'https://auth.sandbox.ebay.com'
     : 'https://auth.ebay.com',
@@ -557,11 +557,12 @@ export async function getActiveListings(orgId: string): Promise<EbayActiveListin
   }).filter(l => l.listingId && l.price > 0)
 }
 
-// ── Finding API — sold price lookup ──────────────────────────────────────────
+// ── Browse API — active listing price lookup ──────────────────────────────────
 //
-// Replaces the deprecated Trading API GetSearchResults call.
-// Uses the App ID only — no user OAuth token required.
-// Returns completed/sold fixed-price listings from the last 90 days.
+// Uses the REST Browse API (buy/browse/v1) with a client-credentials app token.
+// This is the modern eBay REST API — more reliable than the legacy Finding API,
+// which returned 503s consistently. No user OAuth required; app token only.
+// Returns active FixedPrice listings from eBay UK, filtered by condition.
 
 export interface SoldListing {
   title: string
@@ -569,26 +570,54 @@ export interface SoldListing {
   date:  string
 }
 
-// Maps our internal condition codes to eBay Finding API condition IDs.
-// Must match CONDITION_IDS above (collectibles vocabulary for category 183454).
-// https://developer.ebay.com/devzone/finding/callref/types/ItemFilterType.html
-const CONDITION_FILTER_IDS: Record<string, string[]> = {
-  NM:     ['2750'],            // Like New
-  LP:     ['2500'],            // Very Good
-  MP:     ['2000'],            // Good
-  HP:     ['1500'],            // Acceptable
-  Sealed: ['1000', '1500'],    // New, New Other
+// Maps our condition codes to Browse API conditionId filter values.
+// https://developer.ebay.com/api-docs/buy/browse/resources/item_summary/methods/search#uri.filter
+const BROWSE_CONDITION_IDS: Record<string, string> = {
+  NM:     '2750',        // Like New
+  LP:     '2500',        // Very Good
+  MP:     '2000',        // Good
+  HP:     '1500',        // Acceptable
+  Sealed: '1000|1500',   // New | New Other
+}
+
+// In-process app token cache — avoids fetching a new token on every price lookup.
+// Keyed by appId so multi-org setups don't share tokens.
+const appTokenCache = new Map<string, { token: string; expires: number }>()
+
+/**
+ * Get (or refresh) a client-credentials app token for Browse API calls.
+ * Tokens last 2h; we refresh 60s before expiry.
+ */
+async function getAppToken(appId: string, secret: string): Promise<string> {
+  const cached = appTokenCache.get(appId)
+  if (cached && cached.expires > Date.now() + 60_000) return cached.token
+
+  const credentials = Buffer.from(`${appId}:${secret}`).toString('base64')
+  const res = await fetch(URLS.tokenUrl, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${credentials}`,
+      'Content-Type':  'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials&scope=https%3A%2F%2Fapi.ebay.com%2Foauth%2Fapi_scope',
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`eBay app token failed (${res.status}): ${text}`)
+  }
+
+  const data = await res.json() as { access_token: string; expires_in: number }
+  appTokenCache.set(appId, { token: data.access_token, expires: Date.now() + data.expires_in * 1000 })
+  return data.access_token
 }
 
 /**
- * Fetch active eBay listing prices for a card.
+ * Fetch active eBay UK listing prices for a card using the Browse API.
  *
- * Uses Finding API findItemsAdvanced (app token only, no user OAuth needed).
- * findCompletedItems (sold data) consistently returns 503 from eBay's API,
- * so we use active FixedPrice listings instead and apply tighter IQR outlier
- * filtering (1.5×) to remove overpriced BIN outliers.
- *
- * Optionally filters by condition to prevent NM/HP price mixing.
+ * Uses client-credentials app token — no user OAuth required.
+ * Filters to FixedPrice listings and optionally narrows by condition.
+ * IQR outlier removal (1.5×) drops bundles and overpriced BIN listings.
  */
 export async function fetchSoldPrices(
   orgId: string,
@@ -598,74 +627,62 @@ export async function fetchSoldPrices(
   cardNumber?: string,  // Optional: e.g. '025' — narrows results to specific print
 ): Promise<SoldListing[]> {
   const creds = await getCredentials(orgId)
-  if (!creds.appId) throw new Error('eBay App ID not configured')
+  if (!creds.appId || !creds.secret) throw new Error('eBay App ID not configured')
 
-  // Card number significantly narrows results when present (e.g. "Charizard Base Set 4/102")
-  const query = [cardName, setCode, cardNumber ? `${cardNumber}` : undefined].filter(Boolean).join(' ')
+  const token = await getAppToken(creds.appId, creds.secret)
 
-  // Use findItemsAdvanced (active listings) — findCompletedItems (sold) returns
-  // 503s consistently. Active listings with IQR outlier filtering give a
-  // reliable market-price estimate.
+  const query = [cardName, setCode, cardNumber].filter(Boolean).join(' ')
+
+  // Build filter string: always fixed price, optionally condition
+  const filterParts = ['buyingOptions:{FIXED_PRICE}']
+  const conditionFilter = condition ? BROWSE_CONDITION_IDS[condition] : undefined
+  if (conditionFilter) filterParts.push(`conditionIds:{${conditionFilter}}`)
+
   const params = new URLSearchParams({
-    'OPERATION-NAME':                 'findItemsAdvanced',
-    'SERVICE-VERSION':                '1.13.0',
-    'SECURITY-APPNAME':               creds.appId,
-    'RESPONSE-DATA-FORMAT':           'JSON',
-    'REST-PAYLOAD':                   '',
-    'keywords':                       query,
-    'itemFilter(0).name':             'ListingType',
-    'itemFilter(0).value':            'FixedPrice',
-    'sortOrder':                      'PricePlusShippingLowest',
-    'paginationInput.entriesPerPage': '100',
-    'paginationInput.pageNumber':     '1',
-    'siteid':                         String(SITE_ID),
+    q:      query,
+    limit:  '50',
+    filter: filterParts.join(','),
   })
-
-  // Add condition filter if we have a mapping for it
-  const conditionIds = condition ? CONDITION_FILTER_IDS[condition] : undefined
-  if (conditionIds?.length) {
-    conditionIds.forEach((id, i) => {
-      params.set(`itemFilter(${1 + i}).name`,  'Condition')
-      params.set(`itemFilter(${1 + i}).value`, id)
-    })
-  }
 
   // Retry up to 2 times on transient 5xx errors
   let res: Response | null = null
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
-    res = await fetch(`${URLS.finding}?${params}`)
+    res = await fetch(`${URLS.browse}?${params}`, {
+      headers: {
+        'Authorization':           `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+        'Accept':                  'application/json',
+      },
+    })
     if (res.ok || res.status < 500) break
   }
   if (!res!.ok) {
     throw new Error(
       res!.status === 503
         ? 'eBay price service temporarily unavailable — please try again in a moment'
-        : `eBay Finding API error: HTTP ${res!.status}`,
+        : `eBay Browse API error: HTTP ${res!.status}`,
     )
   }
 
-  const json = await res.json() as {
-    findItemsAdvancedResponse?: [{
-      searchResult?: [{ item?: Array<{
-        title:           [string]
-        sellingStatus:   [{ currentPrice: [{ __value__: string }] }]
-        listingInfo:     [{ startTime: [string] }]
-      }> }]
-    }]
+  const data = await res!.json() as {
+    itemSummaries?: Array<{
+      title:       string
+      price?:      { value: string }
+      itemWebUrl?: string
+    }>
   }
 
-  const items = json?.findItemsAdvancedResponse?.[0]?.searchResult?.[0]?.item ?? []
-  const raw = items.map(item => ({
-    title: item.title?.[0] ?? '',
-    price: parseFloat(item.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ ?? '0'),
-    date:  item.listingInfo?.[0]?.startTime?.[0] ?? '',
-  })).filter(i => i.price > 0)
+  const raw = (data.itemSummaries ?? [])
+    .map(item => ({
+      title: item.title ?? '',
+      price: parseFloat(item.price?.value ?? '0'),
+      date:  '',
+    }))
+    .filter(i => i.price > 0)
 
   // IQR-based outlier removal — drops bundles, slabs, and pricing errors.
-  // Uses a tight 1.5× IQR fence (vs the old 3×) since active listings have
-  // more outliers (overpriced BIN listings) than sold data.
-  // Only applied when we have enough data points to be meaningful.
+  // 1.5× fence is tighter than the classic 3× since active BIN listings skew high.
   if (raw.length >= 8) {
     const sorted = [...raw].sort((a, b) => a.price - b.price)
     const q1 = sorted[Math.floor(sorted.length * 0.25)]!.price
