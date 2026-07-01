@@ -13,7 +13,7 @@
 // The override is stored in card.overrides (never mutates AI data).
 // =============================================================================
 import { useState, useRef, useCallback } from 'react'
-import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus } from 'lucide-react'
+import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink } from 'lucide-react'
 import { cn, formatGBP }  from '@/lib/utils'
 import { resizeImageToBase64 } from '@/lib/image'
 import { CONDITIONS, FOIL_TYPES } from '@/components/stock/cardConstants'
@@ -278,9 +278,9 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
           </div>
         )}
 
-        {/* Row 3: eBay price */}
+        {/* Row 3: eBay price + sold search link */}
         {isReady && (
-          <div className="flex items-center gap-1.5 text-xs">
+          <div className="flex items-center gap-1.5 text-xs flex-wrap">
             {card.ebay_avg_sold ? (
               <>
                 <span className="text-green-400 font-semibold tabular-nums">
@@ -293,6 +293,21 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             ) : (
               <span className="text-muted-foreground/50 italic">No eBay price found</span>
             )}
+            {/* Always show sold-search link so user can verify or find price manually */}
+            <a
+              href={`https://www.ebay.co.uk/sch/i.html?${new URLSearchParams({
+                _nkw:        [cardName, setCode, cardNumber].filter(Boolean).join(' '),
+                LH_Sold:     '1',
+                LH_Complete: '1',
+                _sacat:      '183454',  // Pokémon TCG category
+              }).toString()}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View eBay sold listings"
+              className="inline-flex items-center gap-0.5 text-muted-foreground/40 hover:text-primary/70 transition-colors ml-0.5"
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
           </div>
         )}
 

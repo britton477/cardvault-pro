@@ -25,8 +25,8 @@ import { requireAuth, ok, serverError, validationError, badRequest } from '@/lib
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 
 const BodySchema = z.object({
-  /** Raw base64 JPEG (no data:// prefix). Max ~200KB after client resize. */
-  image:      z.string().min(100).max(300_000),
+  /** Raw base64 JPEG (no data:// prefix). Max ~400KB after client resize to 1200px. */
+  image:      z.string().min(100).max(600_000),
   /** When set, skip AI set detection and inject this value directly. */
   set_code:   z.string().max(20).optional(),
   /**
@@ -65,13 +65,15 @@ CRITICAL RULES:
 1. The short ALL-CAPS code printed BEFORE the language indicator is the set_code.
 2. Do NOT include the language letters (EN/JP/DE…) in set_code — they are a SEPARATE field.
 3. Read the PRINTED TEXT. Do NOT guess or infer from the card symbol/graphic alone.
+4. IMPORTANT: If the set code text is too small to read with certainty, return "" (empty string).
+   A wrong set code corrupts inventory data. "SVI" or "PAL" as a guess is worse than "".
+   Only use the known codes list below if you can partially read the letters and are matching them.
 
-Known set codes for disambiguation when print is unclear:
+Known set codes for disambiguation when text is partially legible:
 Scarlet & Violet (2023–2025): SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG
 Sword & Shield (2020–2023):   SSH, RCL, DAA, VIV, SHF, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, CEL, PGO
 Sun & Moon (2017–2019):       SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
 XY (2014–2016):               XY, FLF, FFI, PHF, PRC, ROS, AOR, BKT, BKP, FCO, STS, EVO
-Leave set_code as empty string ONLY if the bottom of the card is completely obscured.
 
 ═══ HOW TO FIND THE CARD NUMBER ══════════════════════════════════════
 The number appears as "NNN/TTT" — NNN is the card's own number, TTT is the set total.
@@ -80,7 +82,7 @@ Output ONLY NNN — the part BEFORE the slash.
 • "025/198" → "025"
 • "TG01/TG30" → "TG01"
 • "SWSH001" → "SWSH001"
-NEVER output the set total (the number after the slash). Read the actual digits — do NOT guess.
+NEVER output the set total. If the number is not clearly legible, return "" — do NOT guess.
 
 ═══ CONDITION ════════════════════════════════════════════════════════
 THE DEFAULT IS ALWAYS NM. Only downgrade if you can CLEARLY AND UNMISTAKEABLY see damage:
@@ -252,6 +254,10 @@ export async function POST(request: NextRequest) {
       },
     ]
 
+    // claude-sonnet-4-6 is used here rather than haiku because reading the tiny
+    // printed set code and card number at the bottom of a card requires reliable
+    // small-text OCR. Sonnet is meaningfully better at this; the cost difference
+    // (~$0.005 vs $0.002 per card) is acceptable for a business inventory tool.
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method:  'POST',
       headers: {
@@ -260,7 +266,7 @@ export async function POST(request: NextRequest) {
         'content-type':      'application/json',
       },
       body: JSON.stringify({
-        model:      'claude-haiku-4-5-20251001',
+        model:      'claude-sonnet-4-6',
         max_tokens: 400,
         system:     systemPrompt,
         messages,

@@ -9,8 +9,12 @@
 // Typical savings: 4 MB phone JPEG → ~80 KB = 50× smaller Anthropic payload.
 // =============================================================================
 
-const MAX_DIM = 800
-const QUALITY = 0.72
+// 1200px gives the vision model ~50% more pixels on each axis versus 800px.
+// The bottom-left set code text on modern Pokémon cards is tiny (~2mm on a real
+// card); at 800px it renders ~16px tall — hard to OCR reliably. At 1200px it's
+// ~24px, which is meaningfully better without ballooning the payload.
+const MAX_DIM = 1200
+const QUALITY = 0.75
 
 /**
  * Resize a File/Blob to at most MAX_DIM px on its longest side, encode as JPEG,
