@@ -570,14 +570,26 @@ export interface SoldListing {
   date:  string
 }
 
-// Maps our condition codes to Browse API conditionId filter values.
-// https://developer.ebay.com/api-docs/buy/browse/resources/item_summary/methods/search#uri.filter
+// Maps our condition codes to Browse API conditionId filter values for
+// Pokémon TCG category 183454.
+//
+// IMPORTANT: this category uses a DIFFERENT condition ID system from standard eBay:
+//   4000 = Ungraded  (all raw cards — NM / LP / MP / HP)
+//   2750 = Professionally Graded  (PSA, BGS, CGC slabs)
+//   1000 = New  (sealed product)
+//
+// The standard eBay condition IDs (2750=Like New, 2500=Very Good, etc.) do NOT
+// apply here. Using them returns the wrong listings — 2750 in this category is
+// graded slabs, not raw NM cards.
+//
+// Sub-conditions (NM vs LP) are set via ConditionDescriptors on listings and
+// are NOT filterable in the Browse API, so all raw conditions map to 4000.
 const BROWSE_CONDITION_IDS: Record<string, string> = {
-  NM:     '2750',        // Like New
-  LP:     '2500',        // Very Good
-  MP:     '2000',        // Good
-  HP:     '1500',        // Acceptable
-  Sealed: '1000|1500',   // New | New Other
+  NM:     '4000',  // Ungraded
+  LP:     '4000',  // Ungraded
+  MP:     '4000',  // Ungraded
+  HP:     '4000',  // Ungraded
+  Sealed: '1000',  // New
 }
 
 // In-process app token cache — avoids fetching a new token on every price lookup.
@@ -631,10 +643,13 @@ export async function fetchSoldPrices(
 
   const token = await getAppToken(creds.appId, creds.secret)
 
+  // Include set_code in the query — sellers include it in listing titles
+  // (e.g. "Dreepy M2A 211/193") so it narrows results to the correct print.
   const query = [cardName, setCode, cardNumber].filter(Boolean).join(' ')
 
-  // Build filter string: always fixed price, optionally condition
-  const filterParts = ['buyingOptions:{FIXED_PRICE}']
+  // Build filter string: always fixed price, always scoped to Trading Cards
+  // (category 183454 = Pokémon TCG), optionally condition
+  const filterParts = ['buyingOptions:{FIXED_PRICE}', 'categoryIds:{183454}']
   const conditionFilter = condition ? BROWSE_CONDITION_IDS[condition] : undefined
   if (conditionFilter) filterParts.push(`conditionIds:{${conditionFilter}}`)
 
