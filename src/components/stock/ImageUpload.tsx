@@ -308,8 +308,8 @@ export function ImageUpload({ cardId, photos, disabled }: ImageUploadProps) {
               <div
                 key={photo.id}
                 draggable={!disabled && !isDeleting && !isCropping}
-                onDragStart={() => { setDragSourceId(photo.id); setDragOverId(null) }}
-                onDragOver={e  => { e.preventDefault(); if (dragSourceId && dragSourceId !== photo.id) setDragOverId(photo.id) }}
+                onDragStart={e => { e.dataTransfer.setData('text/plain', photo.id); e.dataTransfer.effectAllowed = 'move'; setDragSourceId(photo.id); setDragOverId(null) }}
+                onDragOver={e  => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragSourceId && dragSourceId !== photo.id) setDragOverId(photo.id) }}
                 onDrop={e      => { e.preventDefault(); void handleReorderDrop(photo.id) }}
                 onDragEnd={()  => { setDragSourceId(null); setDragOverId(null) }}
                 className={cn(

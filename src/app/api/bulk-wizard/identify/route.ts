@@ -36,28 +36,41 @@ const BodySchema = z.object({
 const SYSTEM_PROMPT = `You are an expert Pokémon TCG card identifier. Given a photo of a Pokémon card, extract the following fields and return ONLY valid JSON with no markdown, no explanation, no surrounding text:
 
 {
-  "card_name":   "<name printed at the top of the card in English — e.g. 'Charizard', 'Misty\\'s Psyduck'>",
-  "set_code":    "<3–6 character set code from the bottom-left set symbol — e.g. 'SVI', 'PAL', 'OBF', 'MEW', 'TWM', 'SHF', 'CRZ', 'LOR', 'ASR' — leave empty string ONLY if the symbol is completely obscured>",
-  "card_number": "<number printed at bottom-right, e.g. '025/198', '006/165', 'TG01/TG30' — leave empty string if not visible>",
+  "card_name":   "<name printed at the top of the card — e.g. 'Charizard', 'Pikachu ex', 'Misty\\'s Psyduck'>",
+  "set_code":    "<3–6 character set abbreviation — read the TEXT printed near the bottom of the card, not just the graphic symbol>",
+  "card_number": "<ONLY the digits/text BEFORE the slash — e.g. if card reads '025/198' output '025'; if '006/165' output '006'; if 'TG01/TG30' output 'TG01' — leave empty if not visible>",
   "condition":   "<NM | LP | MP | HP>",
   "foil_type":   "<Normal | Holo | Reverse Holo | Full Art | Secret Rare | Special Illustration Rare | Hyper Rare | Illustration Rare>",
   "language":    "<EN | JP | DE | FR | ES | IT | PT | KO | ZH>",
-  "confidence":  <0.0–1.0 float, how certain you are of the card_name and set_code>
+  "confidence":  <0.0–1.0 float>
 }
 
-Condition grading rules (apply strictly):
-- NM (Near Mint): No visible wear. Edges crisp, surface clean, no scratches. DEFAULT for cards that look good.
-- LP (Lightly Played): Minor edge whitening on 1–2 corners, very faint scratches. Must be clearly visible.
-- MP (Moderately Played): Obvious edge wear on multiple corners, noticeable scratches or scuffs.
-- HP (Heavily Played): Severe edge wear, creases, heavy scratching, or bent corners.
-→ Default to NM unless you can clearly see wear. A card photographed cleanly on a flat surface is almost certainly NM.
+HOW TO FIND THE SET CODE (critical — read carefully):
+On modern Pokémon cards (Sword & Shield era onward), the set code is PRINTED AS TEXT near the bottom of the card — usually bottom-left, next to or below the set symbol graphic. It is a short abbreviation like "SVI", "PAL", "TWM", etc.
+- DO NOT guess the code from the symbol shape alone. READ the printed letters.
+- The printed text near the bottom-left info line will contain the code. Look for 2–6 uppercase letters grouped together, e.g. "SVI 025/198" or "PAL 006/165".
+- If you can read "SVI" in that area → set_code = "SVI". If you see "PAL" → "PAL". Etc.
+- Only fall back to symbol-matching if you truly cannot read any printed letters.
 
-Set code rules:
-- Look at the small symbol in the bottom-left corner of the card — every modern card has one.
-- Match it to known Scarlet & Violet era codes: SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE
-- Match it to Sword & Shield era: BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, SHF, CEL
-- Match it to Sun & Moon era: SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
-- If you can read any letters on the symbol itself, include them. Leave empty only if truly unreadable.
+Known set codes by era (for reference when reading is ambiguous):
+- Scarlet & Violet: SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG
+- Sword & Shield: SSH, RCL, DAA, VIV, SHF, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, CEL, PGO
+- Sun & Moon: SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
+- XY era: XY, FLF, FFI, PHF, PRC, ROS, AOR, BKT, BKP, FCO, STS, EVO, STS
+- Leave empty string ONLY if the bottom of the card is completely obscured.
+
+HOW TO FIND THE CARD NUMBER:
+- Look at the bottom area of the card. The number appears as "NNN/TTT" (e.g. "025/198").
+- Output ONLY the part BEFORE the slash: "025" not "025/198".
+- For promo or special cards it may be "SM01", "SWSH001", "TG01/TG30" → output "TG01".
+- Do NOT output the set total (the number after the slash).
+
+Condition grading:
+- NM: No visible wear — edges crisp, surface clean. DEFAULT for cards that look undamaged.
+- LP: Minor edge whitening on 1–2 corners, very faint scratches. Must be clearly visible.
+- MP: Obvious edge wear on multiple corners, noticeable scratches or scuffs.
+- HP: Severe wear, creases, heavy scratching, or bent corners.
+→ Default to NM unless you can clearly see damage.
 
 Additional rules:
 - card_name must be the English name even if the card is in another language
@@ -110,7 +123,7 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({
         model:      'claude-haiku-4-5-20251001',
-        max_tokens: 300,
+        max_tokens: 400,
         system:     SYSTEM_PROMPT,
         messages,
       }),

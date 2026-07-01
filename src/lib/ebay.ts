@@ -581,14 +581,14 @@ const CONDITION_FILTER_IDS: Record<string, string[]> = {
 }
 
 /**
- * Fetch completed/sold eBay prices for a card.
+ * Fetch active eBay listing prices for a card.
  *
- * Uses Finding API findCompletedItems (app token only, no user OAuth needed).
+ * Uses Finding API findItemsAdvanced (app token only, no user OAuth needed).
+ * findCompletedItems (sold data) consistently returns 503 from eBay's API,
+ * so we use active FixedPrice listings instead and apply tighter IQR outlier
+ * filtering (1.5×) to remove overpriced BIN outliers.
+ *
  * Optionally filters by condition to prevent NM/HP price mixing.
- *
- * Outlier removal: drops prices outside 3× the interquartile range to exclude
- * bundles, graded slabs, and data entry errors from the result set before the
- * median is computed.
  */
 export async function fetchSoldPrices(
   orgId: string,
@@ -603,20 +603,20 @@ export async function fetchSoldPrices(
   // Card number significantly narrows results when present (e.g. "Charizard Base Set 4/102")
   const query = [cardName, setCode, cardNumber ? `${cardNumber}` : undefined].filter(Boolean).join(' ')
 
-  // Build base params
+  // Use findItemsAdvanced (active listings) — findCompletedItems (sold) returns
+  // 503s consistently. Active listings with IQR outlier filtering give a
+  // reliable market-price estimate.
   const params = new URLSearchParams({
-    'OPERATION-NAME':                 'findCompletedItems',
+    'OPERATION-NAME':                 'findItemsAdvanced',
     'SERVICE-VERSION':                '1.13.0',
     'SECURITY-APPNAME':               creds.appId,
     'RESPONSE-DATA-FORMAT':           'JSON',
     'REST-PAYLOAD':                   '',
     'keywords':                       query,
-    'itemFilter(0).name':             'SoldItemsOnly',
-    'itemFilter(0).value':            'true',
-    'itemFilter(1).name':             'ListingType',
-    'itemFilter(1).value':            'FixedPrice',
-    'sortOrder':                      'EndTimeSoonest',
-    'paginationInput.entriesPerPage': '100',  // increased from 50 for better outlier removal
+    'itemFilter(0).name':             'ListingType',
+    'itemFilter(0).value':            'FixedPrice',
+    'sortOrder':                      'PricePlusShippingLowest',
+    'paginationInput.entriesPerPage': '100',
     'paginationInput.pageNumber':     '1',
     'siteid':                         String(SITE_ID),
   })
@@ -625,13 +625,12 @@ export async function fetchSoldPrices(
   const conditionIds = condition ? CONDITION_FILTER_IDS[condition] : undefined
   if (conditionIds?.length) {
     conditionIds.forEach((id, i) => {
-      params.set(`itemFilter(${2 + i}).name`,  'Condition')
-      params.set(`itemFilter(${2 + i}).value`, id)
+      params.set(`itemFilter(${1 + i}).name`,  'Condition')
+      params.set(`itemFilter(${1 + i}).value`, id)
     })
   }
 
-  // Retry up to 2 times on transient 5xx errors (eBay Finding API returns 503
-  // occasionally under load; a short back-off recovers most of the time).
+  // Retry up to 2 times on transient 5xx errors
   let res: Response | null = null
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
@@ -647,31 +646,33 @@ export async function fetchSoldPrices(
   }
 
   const json = await res.json() as {
-    findCompletedItemsResponse?: [{
+    findItemsAdvancedResponse?: [{
       searchResult?: [{ item?: Array<{
         title:           [string]
         sellingStatus:   [{ currentPrice: [{ __value__: string }] }]
-        listingInfo:     [{ endTime: [string] }]
+        listingInfo:     [{ startTime: [string] }]
       }> }]
     }]
   }
 
-  const items = json?.findCompletedItemsResponse?.[0]?.searchResult?.[0]?.item ?? []
+  const items = json?.findItemsAdvancedResponse?.[0]?.searchResult?.[0]?.item ?? []
   const raw = items.map(item => ({
     title: item.title?.[0] ?? '',
     price: parseFloat(item.sellingStatus?.[0]?.currentPrice?.[0]?.__value__ ?? '0'),
-    date:  item.listingInfo?.[0]?.endTime?.[0] ?? '',
+    date:  item.listingInfo?.[0]?.startTime?.[0] ?? '',
   })).filter(i => i.price > 0)
 
-  // IQR-based outlier removal — drops bundles, slabs, and data errors
-  // Only applied when we have enough data points to be meaningful
+  // IQR-based outlier removal — drops bundles, slabs, and pricing errors.
+  // Uses a tight 1.5× IQR fence (vs the old 3×) since active listings have
+  // more outliers (overpriced BIN listings) than sold data.
+  // Only applied when we have enough data points to be meaningful.
   if (raw.length >= 8) {
     const sorted = [...raw].sort((a, b) => a.price - b.price)
     const q1 = sorted[Math.floor(sorted.length * 0.25)]!.price
     const q3 = sorted[Math.floor(sorted.length * 0.75)]!.price
     const iqr = q3 - q1
-    const lo  = q1 - 3 * iqr
-    const hi  = q3 + 3 * iqr
+    const lo  = q1 - 1.5 * iqr
+    const hi  = q3 + 1.5 * iqr
     return raw.filter(i => i.price >= lo && i.price <= hi)
   }
 
