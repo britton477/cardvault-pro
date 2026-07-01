@@ -313,8 +313,10 @@ export type BulkWizardPhase = 'scan' | 'cost' | 'import'
 export interface BulkWizardCard {
   /** Stable client-only ID (crypto.randomUUID) */
   uid:           string
-  /** Resized base64 JPEG, held in memory only — NEVER sent to Supabase */
+  /** Resized base64 JPEG (primary scan), held in memory only — NEVER sent to Supabase */
   imageDataUrl:  string
+  /** Additional card photos (card back, edge close-ups, damage shots) — memory only */
+  additionalImages: string[]
 
   // Pipeline state
   status: BulkCardStatus
@@ -348,9 +350,14 @@ export interface BulkWizardCard {
 
 export interface BulkIdentifyRequest {
   /** Base64-encoded image (no data:// prefix) */
-  image:     string
+  image:      string
   /** If set, skip AI set detection and use this value */
-  set_code?: string
+  set_code?:  string
+  /**
+   * When true, use the retro prompt which identifies sets by symbol/design
+   * rather than printed text code. For cards from WOTC era through BW (1999–2013).
+   */
+  retro_mode?: boolean
 }
 
 export interface BulkIdentifyResponse {

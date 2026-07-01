@@ -21,7 +21,7 @@ import { z, ZodError }      from 'zod'
 import { requireAuth, ok, serverError, validationError } from '@/lib/api'
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 import { withCache }   from '@/lib/cache'
-import { fetchSoldPrices } from '@/lib/ebay'
+import { fetchSoldPrices, type SoldListing } from '@/lib/ebay'
 
 const BodySchema = z.object({
   card_name:   z.string().min(1).max(200),
@@ -61,13 +61,24 @@ export async function POST(request: NextRequest) {
 
     const result = await withCache(cacheKey, 60 * 60 * 24, async () => {
       try {
-        const listings = await fetchSoldPrices(
-          orgId,
-          input.card_name,
-          input.set_code,
-          input.condition,
-          input.card_number,
-        )
+        // Try progressively broader queries until we get results.
+        // Most specific (name + set + number) gives the best match; falling back
+        // to name-only avoids a zero result when sellers omit the set code.
+        const queryFns: Array<() => Promise<SoldListing[]>> = [
+          () => fetchSoldPrices(orgId, input.card_name, input.set_code, input.condition, input.card_number),
+          ...(input.card_number
+            ? [() => fetchSoldPrices(orgId, input.card_name, input.set_code, input.condition)]
+            : []),
+          ...(input.set_code
+            ? [() => fetchSoldPrices(orgId, input.card_name, undefined, input.condition)]
+            : []),
+        ]
+
+        let listings: SoldListing[] = []
+        for (const fn of queryFns) {
+          listings = await fn()
+          if (listings.length > 0) break
+        }
 
         if (!listings.length) {
           return { avg_sold: 0, median_sold: 0, sample_count: 0 }

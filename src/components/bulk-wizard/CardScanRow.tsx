@@ -12,9 +12,10 @@
 // Inline editing: clicking any field opens a small input/select inline.
 // The override is stored in card.overrides (never mutates AI data).
 // =============================================================================
-import { useState }       from 'react'
-import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil } from 'lucide-react'
+import { useState, useRef, useCallback } from 'react'
+import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus } from 'lucide-react'
 import { cn, formatGBP }  from '@/lib/utils'
+import { resizeImageToBase64 } from '@/lib/image'
 import { CONDITIONS, FOIL_TYPES } from '@/components/stock/cardConstants'
 import type { BulkWizardCard, CardCondition } from '@/types'
 
@@ -160,6 +161,37 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
   const CONDITION_OPTIONS = CONDITIONS.filter(c => c.value !== 'Sealed')
   const FOIL_OPTIONS = FOIL_TYPES.map(f => ({ value: f, label: f }))
 
+  // ── Additional photos ──────────────────────────────────────────────────────
+  const addPhotoRef = useRef<HTMLInputElement>(null)
+  const additionalImages = card.additionalImages ?? []
+
+  const handleAddPhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter(f =>
+      ['image/jpeg', 'image/png', 'image/webp'].includes(f.type)
+    )
+    e.target.value = ''
+    if (!files.length) return
+    try {
+      const newImgs = await Promise.all(
+        files.map(async f => {
+          const b64 = await resizeImageToBase64(f)
+          return `data:image/jpeg;base64,${b64}`
+        })
+      )
+      onUpdate(card.uid, {
+        additionalImages: [...additionalImages, ...newImgs],
+      })
+    } catch {
+      // Additional photos are optional — silently ignore resize errors
+    }
+  }, [card.uid, additionalImages, onUpdate])
+
+  const removeAdditionalImage = useCallback((idx: number) => {
+    onUpdate(card.uid, {
+      additionalImages: additionalImages.filter((_, i) => i !== idx),
+    })
+  }, [card.uid, additionalImages, onUpdate])
+
   return (
     <div className={cn(
       'flex items-start gap-3 rounded-lg p-3 border transition-colors',
@@ -261,6 +293,53 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             ) : (
               <span className="text-muted-foreground/50 italic">No eBay price found</span>
             )}
+          </div>
+        )}
+
+        {/* Row 4: Additional photos (back, edge, damage) */}
+        {isReady && (
+          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+            {additionalImages.map((src, idx) => (
+              <div
+                key={idx}
+                className="group relative w-7 h-9 rounded overflow-hidden border border-border flex-shrink-0"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt={`Photo ${idx + 2}`} className="w-full h-full object-cover" />
+                <button
+                  onClick={() => removeAdditionalImage(idx)}
+                  title="Remove photo"
+                  className={cn(
+                    'absolute inset-0 flex items-center justify-center',
+                    'bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity',
+                  )}
+                >
+                  <X className="h-3 w-3 text-white" />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => addPhotoRef.current?.click()}
+              title="Add another photo (card back, edge, damage)"
+              className={cn(
+                'w-7 h-9 rounded border border-dashed flex-shrink-0',
+                'flex items-center justify-center transition-colors',
+                additionalImages.length === 0
+                  ? 'border-border/50 text-muted-foreground/40 hover:border-primary/50 hover:text-primary/60'
+                  : 'border-border/40 text-muted-foreground/30 hover:border-primary/40 hover:text-primary/50',
+              )}
+            >
+              <ImagePlus className="h-3 w-3" />
+            </button>
+            <input
+              ref={addPhotoRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="hidden"
+              onChange={handleAddPhotos}
+            />
           </div>
         )}
       </div>

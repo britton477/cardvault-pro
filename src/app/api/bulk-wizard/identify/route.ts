@@ -26,9 +26,15 @@ import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 
 const BodySchema = z.object({
   /** Raw base64 JPEG (no data:// prefix). Max ~200KB after client resize. */
-  image:    z.string().min(100).max(300_000),
+  image:      z.string().min(100).max(300_000),
   /** When set, skip AI set detection and inject this value directly. */
-  set_code: z.string().max(20).optional(),
+  set_code:   z.string().max(20).optional(),
+  /**
+   * When true, use the retro-mode prompt which identifies sets by card
+   * symbol / design rather than printed text code.
+   * Covers WOTC era through Black & White (1999–2013).
+   */
+  retro_mode: z.boolean().optional(),
 })
 
 // Structured extraction prompt — instructs the model to return JSON only.
@@ -37,44 +43,171 @@ const SYSTEM_PROMPT = `You are an expert Pokémon TCG card identifier. Given a p
 
 {
   "card_name":   "<name printed at the top of the card — e.g. 'Charizard', 'Pikachu ex', 'Misty\\'s Psyduck'>",
-  "set_code":    "<3–6 character set abbreviation — read the TEXT printed near the bottom of the card, not just the graphic symbol>",
-  "card_number": "<ONLY the digits/text BEFORE the slash — e.g. if card reads '025/198' output '025'; if '006/165' output '006'; if 'TG01/TG30' output 'TG01' — leave empty if not visible>",
-  "condition":   "<NM | LP | MP | HP>",
+  "set_code":    "<3–6 character set abbreviation — see HOW TO FIND THE SET CODE below>",
+  "card_number": "<see HOW TO FIND THE CARD NUMBER below>",
+  "condition":   "<NM | LP | MP | HP> — DEFAULT IS ALWAYS NM unless damage is unmistakeable",
   "foil_type":   "<Normal | Holo | Reverse Holo | Full Art | Secret Rare | Special Illustration Rare | Hyper Rare | Illustration Rare>",
   "language":    "<EN | JP | DE | FR | ES | IT | PT | KO | ZH>",
   "confidence":  <0.0–1.0 float>
 }
 
-HOW TO FIND THE SET CODE (critical — read carefully):
-On modern Pokémon cards (Sword & Shield era onward), the set code is PRINTED AS TEXT near the bottom of the card — usually bottom-left, next to or below the set symbol graphic. It is a short abbreviation like "SVI", "PAL", "TWM", etc.
-- DO NOT guess the code from the symbol shape alone. READ the printed letters.
-- The printed text near the bottom-left info line will contain the code. Look for 2–6 uppercase letters grouped together, e.g. "SVI 025/198" or "PAL 006/165".
-- If you can read "SVI" in that area → set_code = "SVI". If you see "PAL" → "PAL". Etc.
-- Only fall back to symbol-matching if you truly cannot read any printed letters.
+═══ HOW TO FIND THE SET CODE ══════════════════════════════════════════
+On modern Pokémon cards the bottom-left info line follows this pattern:
+  SET_CODE  LANG_CODE  CARD_NUMBER/SET_TOTAL
 
-Known set codes by era (for reference when reading is ambiguous):
-- Scarlet & Violet: SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG
-- Sword & Shield: SSH, RCL, DAA, VIV, SHF, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, CEL, PGO
-- Sun & Moon: SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
-- XY era: XY, FLF, FFI, PHF, PRC, ROS, AOR, BKT, BKP, FCO, STS, EVO, STS
-- Leave empty string ONLY if the bottom of the card is completely obscured.
+Concrete examples of what you will see printed on actual cards:
+  "JTG EN  181/159"   →  set_code="JTG",  language="EN",  card_number="181"
+  "SVI EN  025/198"   →  set_code="SVI",  language="EN",  card_number="025"
+  "PAL JP  006/165"   →  set_code="PAL",  language="JP",  card_number="006"
+  "TWM EN  TG01/TG30" →  set_code="TWM",  language="EN",  card_number="TG01"
 
-HOW TO FIND THE CARD NUMBER:
-- Look at the bottom area of the card. The number appears as "NNN/TTT" (e.g. "025/198").
-- Output ONLY the part BEFORE the slash: "025" not "025/198".
-- For promo or special cards it may be "SM01", "SWSH001", "TG01/TG30" → output "TG01".
-- Do NOT output the set total (the number after the slash).
+CRITICAL RULES:
+1. The short ALL-CAPS code printed BEFORE the language indicator is the set_code.
+2. Do NOT include the language letters (EN/JP/DE…) in set_code — they are a SEPARATE field.
+3. Read the PRINTED TEXT. Do NOT guess or infer from the card symbol/graphic alone.
 
-Condition grading:
-- NM: No visible wear — edges crisp, surface clean. DEFAULT for cards that look undamaged.
-- LP: Minor edge whitening on 1–2 corners, very faint scratches. Must be clearly visible.
-- MP: Obvious edge wear on multiple corners, noticeable scratches or scuffs.
-- HP: Severe wear, creases, heavy scratching, or bent corners.
-→ Default to NM unless you can clearly see damage.
+Known set codes for disambiguation when print is unclear:
+Scarlet & Violet (2023–2025): SVI, PAL, OBF, MEW, PAF, TEF, TWM, SFA, SCR, SSP, PRE, JTG
+Sword & Shield (2020–2023):   SSH, RCL, DAA, VIV, SHF, BST, CRE, EVS, FST, BRS, ASR, LOR, SIT, CRZ, CEL, PGO
+Sun & Moon (2017–2019):       SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM, UNM, UNB, HIF, CEC
+XY (2014–2016):               XY, FLF, FFI, PHF, PRC, ROS, AOR, BKT, BKP, FCO, STS, EVO
+Leave set_code as empty string ONLY if the bottom of the card is completely obscured.
+
+═══ HOW TO FIND THE CARD NUMBER ══════════════════════════════════════
+The number appears as "NNN/TTT" — NNN is the card's own number, TTT is the set total.
+Output ONLY NNN — the part BEFORE the slash.
+• "181/159" → "181"  (a number ABOVE the set total is valid — these are secret/illustration rares)
+• "025/198" → "025"
+• "TG01/TG30" → "TG01"
+• "SWSH001" → "SWSH001"
+NEVER output the set total (the number after the slash). Read the actual digits — do NOT guess.
+
+═══ CONDITION ════════════════════════════════════════════════════════
+THE DEFAULT IS ALWAYS NM. Only downgrade if you can CLEARLY AND UNMISTAKEABLY see damage:
+- NM (Near Mint): No visible wear — crisp edges, clean surface. ← USE THIS BY DEFAULT
+- LP (Lightly Played): Visible whitening on 1–2 corners or light scratches — must be clearly visible
+- MP (Moderately Played): Heavy edge wear on multiple corners, prominent scratches or scuffs
+- HP (Heavily Played): Creases, deep scratching, or bent/damaged corners
+WHEN IN DOUBT → always output "NM". Glare or slight reflection on a sleeved card is NOT damage.
 
 Additional rules:
 - card_name must be the English name even if the card is in another language
 - If you cannot identify the card at all, set confidence to 0.1 and card_name to "Unknown"
+- Never output anything outside the JSON object`
+
+// =============================================================================
+// RETRO MODE — for cards without a printed set code (WOTC era through BW)
+//
+// Identifies the set from the card's symbol graphic, overall design, and the
+// set-total in the card number (e.g. "/102" is almost uniquely Base Set).
+// Foil terminology also differs: Holo / Reverse Holo / Normal.
+// =============================================================================
+const RETRO_SYSTEM_PROMPT = `You are an expert Pokémon TCG card identifier specialising in vintage and retro sets (1999–2013).
+
+IMPORTANT: These cards do NOT have a printed set code text at the bottom. Identify the set from:
+1. The SET SYMBOL graphic (small icon near the HP bar or bottom of the card)
+2. The set total in the card number (e.g. "/102" = Base Set, "/64" = Jungle, "/62" = Fossil)
+3. Overall card design, border style, and font characteristics
+
+Return ONLY valid JSON with no markdown, no explanation:
+
+{
+  "card_name":   "<English name at top of card>",
+  "set_code":    "<use the symbol/design table below>",
+  "card_number": "<digits BEFORE the slash only — '4' from '4/102', '25' from '25/64'>",
+  "condition":   "<NM | LP | MP | HP> — DEFAULT IS NM",
+  "foil_type":   "<Holo | Reverse Holo | Normal>",
+  "language":    "<EN | JP | DE | FR | ES | IT | PT | KO | ZH>",
+  "confidence":  <0.0–1.0 float>
+}
+
+═══ SET IDENTIFICATION ════════════════════════════════════════════════
+
+WOTC Era (1999–2003) — identify by symbol AND set total:
+  No symbol (solid black border, no icon),  /102 cards → "BASE"    Base Set
+  No symbol, different card back design,    /130 cards → "B2"     Base Set 2
+  Leaf / plant silhouette,                  /64 cards  → "JU"     Jungle
+  Fossil / bone silhouette,                 /62 cards  → "FO"     Fossil
+  Stylised rocket "R",                      /82 cards  → "TR"     Team Rocket
+  Single hexagonal gym badge,               /132 cards → "GH"     Gym Heroes
+  Two stacked hexagonal gym badges,         /132 cards → "GC"     Gym Challenge
+  Shooting star / comet,                    /111 cards → "N1"     Neo Genesis
+  Magnifying glass / hourglass,             /75 cards  → "N2"     Neo Discovery
+  Compass rose / starburst,                 /66 cards  → "N3"     Neo Revelation
+  Crystal / gem,                            /105 cards → "N4"     Neo Destiny
+  Globe with decorative "L",                /110 cards → "LC"     Legendary Collection
+  Swirl / wave pattern,                     /165 cards → "EXP"    Expedition Base Set
+  Water drop / teardrop,                    /186 cards → "AQ"     Aquapolis
+  Mountain peak / geometric crystal,        /182 cards → "SKY"    Skyridge
+
+EX Era (2003–2007) — Poké Ball variations with set colours:
+  Red/blue Poké Ball,   /109 → "RS"   EX Ruby & Sapphire
+  Sandy/brown swirl,    /100 → "SS"   EX Sandstorm
+  Dragon claw/wing,     /97  → "DR"   EX Dragon
+  Stylised M/A badge,   /95  → "MA"   EX Team Magma vs Aqua
+  Triangle/pyramid,     /101 → "HL"   EX Hidden Legends
+  Fire/Leaf badge,      /116 → "FRL"  EX FireRed & LeafGreen
+  DNA helix/pentagon,   /107 → "DX"   EX Deoxys
+  Green leaf swirl,     /106 → "EM"   EX Emerald
+  Gold starburst,       /115 → "UF"   EX Unseen Forces
+  Greek delta Δ,        /113 → "DS"   EX Delta Species
+  Hammer/anvil,         /92  → "LM"   EX Legend Maker
+  Atom/orbital rings,   /110 → "HP"   EX Holon Phantoms
+  Hexagonal crystal,    /100 → "CG"   EX Crystal Guardians
+  Curved dragon wings,  /101 → "DF"   EX Dragon Frontiers
+  Poké Ball with crown, /108 → "PK"   EX Power Keepers
+
+Diamond & Pearl Era (2007–2009):
+  Diamond/pearl gem,    /130 → "DP"   Diamond & Pearl
+  Treasure chest,       /123 → "MT"   Mysterious Treasures
+  Wishing star,         /132 → "SW"   Secret Wonders
+  Floral Poké Ball,     /106 → "GE"   Great Encounters
+  Sun/dawn rays,        /100 → "MD"   Majestic Dawn
+  Torch/flame,          /146 → "LA"   Legends Awakened
+  Snowflake/storm,      /100 → "SF"   Stormfront
+
+Platinum Era (2009):
+  Platinum shield,      /127 → "PL"   Platinum
+  Double crown,         /120 → "RR"   Rising Rivals
+  Trophy cup,           /147 → "SV"   Supreme Victors
+  Arceus halo/wheel,    /99  → "AR"   Arceus
+
+HeartGold & SoulSilver Era (2010–2011):
+  Gold/silver ball,     /123 → "HS"   HeartGold & SoulSilver
+  Burst/explosion,      /95  → "UL"   Unleashed
+  Shield/fort,          /91  → "UD"   Undaunted
+  Fanfare/trumpet,      /102 → "TM"   Triumphant
+  Ringing bell,         /95  → "CL"   Call of Legends
+
+Black & White Era (2011–2013):
+  Yin-yang/BW spiral,   /115 → "BW"   Black & White
+  Gear/cog,             /98  → "EPO"  Emerging Powers
+  Crown/noble,          /101 → "NVI"  Noble Victories
+  Comet/shooting star,  /99  → "NXD"  Next Destinies
+  Dark shadow symbol,   /108 → "DEX"  Dark Explorers
+  BW dragon wings,      /128 → "DRX"  Dragons Exalted
+  Ice crystal/fence,    /153 → "BCR"  Boundaries Crossed
+  Plasma lightning,     /135 → "PLS"  Plasma Storm
+  Frozen bolt,          /122 → "PLF"  Plasma Freeze
+  Plasma blast ring,    /105 → "PLB"  Plasma Blast
+  Laurel wreath trophy, /113 → "LTR"  Legendary Treasures
+
+═══ FOIL TYPE (retro terminology) ═══════════════════════════════════
+- "Holo":         Holographic sparkle in the artwork area ONLY (the window behind the Pokémon)
+- "Reverse Holo": Holographic sparkle on the card BORDER/FRAME (not the artwork)
+- "Normal":       No holographic elements (commons, uncommons, and non-holo rares)
+
+═══ CONDITION ════════════════════════════════════════════════════════
+DEFAULT TO NM. Only downgrade if damage is CLEARLY visible:
+- NM: Crisp edges/corners, no whitening, clean surface
+- LP: Light whitening on 1-2 corners — must be clearly visible
+- MP: Whitening on multiple corners, visible scratches
+- HP: Creases, heavy wear, bent or damaged corners
+Retro cards commonly have minor edge wear from age — only downgrade if damage is unmistakeable.
+
+Additional rules:
+- card_name must be the English name (even for Japanese or other language cards)
+- If you cannot identify the set, return your best guess and set confidence below 0.5
 - Never output anything outside the JSON object`
 
 export async function POST(request: NextRequest) {
@@ -92,6 +225,16 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env['ANTHROPIC_API_KEY']
     if (!apiKey) return serverError(new Error('Anthropic API key not configured'))
 
+    // Retro mode uses a separate prompt tuned for symbol-based set detection
+    const systemPrompt = input.retro_mode ? RETRO_SYSTEM_PROMPT : SYSTEM_PROMPT
+
+    // User message: if a set code is locked, anchor the model to it
+    const userText = input.set_code
+      ? `Identify this card. The set code is confirmed as "${input.set_code}" — use it as-is, do not override it.`
+      : input.retro_mode
+        ? 'Identify this retro Pokémon card. Use the set symbol, set total in the card number, and card design to determine the set.'
+        : 'Identify this card.'
+
     const messages = [
       {
         role: 'user',
@@ -104,12 +247,7 @@ export async function POST(request: NextRequest) {
               data:       input.image,
             },
           },
-          {
-            type: 'text',
-            text: input.set_code
-              ? `Identify this card. The set code is confirmed as "${input.set_code}" — use it as-is, do not override it.`
-              : 'Identify this card.',
-          },
+          { type: 'text', text: userText },
         ],
       },
     ]
@@ -124,7 +262,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model:      'claude-haiku-4-5-20251001',
         max_tokens: 400,
-        system:     SYSTEM_PROMPT,
+        system:     systemPrompt,
         messages,
       }),
     })

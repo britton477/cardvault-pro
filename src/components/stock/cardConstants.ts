@@ -13,6 +13,7 @@ export const CONDITIONS: { value: CardCondition; label: string }[] = [
 
 export const FOIL_TYPES = [
   'Normal', 'Reverse Holo', 'Holo', 'Full Art',
+  'Illustration Rare', 'Special Illustration Rare', 'Hyper Rare',
   'Secret Rare', 'Rainbow Rare', 'Gold Card', 'Alt Art', 'Other',
 ]
 

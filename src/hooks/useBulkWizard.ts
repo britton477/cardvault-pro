@@ -69,11 +69,16 @@ function computeCosts(
 async function apiIdentify(
   imageBase64: string,
   setCode?: string,
+  retroMode?: boolean,
 ): Promise<BulkIdentifyResponse> {
   const res = await fetch('/api/bulk-wizard/identify', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ image: imageBase64, set_code: setCode || undefined }),
+    body:    JSON.stringify({
+      image:      imageBase64,
+      set_code:   setCode || undefined,
+      retro_mode: retroMode || undefined,
+    }),
   })
   if (!res.ok) {
     const err = await res.json() as { error?: string }
@@ -108,6 +113,7 @@ export interface BulkWizardHook {
   phase:          BulkWizardPhase
   totalSpend:     number
   lockedSetCode:  string
+  retroMode:      boolean
   isImporting:    boolean
   importError:    string | null
 
@@ -125,6 +131,7 @@ export interface BulkWizardHook {
   setPhase:        (p: BulkWizardPhase) => void
   setTotalSpend:   (n: number) => void
   setLockedSetCode:(s: string) => void
+  setRetroMode:    (on: boolean) => void
   importAll:       (opts: { lot_id?: string; source?: string }) => Promise<{ created: number }>
 }
 
@@ -134,6 +141,7 @@ export function useBulkWizard(): BulkWizardHook {
   const [phase,         setPhase]         = useState<BulkWizardPhase>('scan')
   const [totalSpend,    setTotalSpend]    = useState(0)
   const [lockedSetCode, setLockedSetCode] = useState('')
+  const [retroMode,     setRetroMode]     = useState(false)
   const [isImporting,   setIsImporting]   = useState(false)
   const [importError,   setImportError]   = useState<string | null>(null)
 
@@ -175,6 +183,7 @@ export function useBulkWizard(): BulkWizardHook {
       const identified = await apiIdentify(
         rawBase64,
         setCodeOverride || lockedSetCode || undefined,
+        retroMode,
       )
 
       updateCard(uid, {
@@ -221,7 +230,7 @@ export function useBulkWizard(): BulkWizardHook {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateCard, lockedSetCode])
+  }, [updateCard, lockedSetCode, retroMode])
 
   // ── Schedule a card through the concurrency-limited pipeline ─────────────
   const schedule = useCallback((uid: string) => {
@@ -242,6 +251,7 @@ export function useBulkWizard(): BulkWizardHook {
       const blankCard: BulkWizardCard = {
         uid,
         imageDataUrl:      '',
+        additionalImages:  [],
         status:            'queued',
         card_name:         '',
         set_code:          lockedSetCode,
@@ -376,6 +386,7 @@ export function useBulkWizard(): BulkWizardHook {
     phase,
     totalSpend,
     lockedSetCode,
+    retroMode,
     isImporting,
     importError,
     computedCards,
@@ -389,6 +400,7 @@ export function useBulkWizard(): BulkWizardHook {
     setPhase,
     setTotalSpend,
     setLockedSetCode,
+    setRetroMode,
     importAll,
   }
 }
