@@ -570,28 +570,6 @@ export interface SoldListing {
   date:  string
 }
 
-// Maps our condition codes to Browse API conditionId filter values for
-// Pokémon TCG category 183454.
-//
-// IMPORTANT: this category uses a DIFFERENT condition ID system from standard eBay:
-//   4000 = Ungraded  (all raw cards — NM / LP / MP / HP)
-//   2750 = Professionally Graded  (PSA, BGS, CGC slabs)
-//   1000 = New  (sealed product)
-//
-// The standard eBay condition IDs (2750=Like New, 2500=Very Good, etc.) do NOT
-// apply here. Using them returns the wrong listings — 2750 in this category is
-// graded slabs, not raw NM cards.
-//
-// Sub-conditions (NM vs LP) are set via ConditionDescriptors on listings and
-// are NOT filterable in the Browse API, so all raw conditions map to 4000.
-const BROWSE_CONDITION_IDS: Record<string, string> = {
-  NM:     '4000',  // Ungraded
-  LP:     '4000',  // Ungraded
-  MP:     '4000',  // Ungraded
-  HP:     '4000',  // Ungraded
-  Sealed: '1000',  // New
-}
-
 // In-process app token cache — avoids fetching a new token on every price lookup.
 // Keyed by appId so multi-org setups don't share tokens.
 const appTokenCache = new Map<string, { token: string; expires: number }>()
@@ -647,49 +625,37 @@ export async function fetchSoldPrices(
   // (e.g. "Dreepy M2A 211/193") so it narrows results to the correct print.
   const query = [cardName, setCode, cardNumber].filter(Boolean).join(' ')
 
-  // Base filters: always fixed price, always scoped to Pokémon TCG (183454)
-  const baseFilter    = 'buyingOptions:{FIXED_PRICE},categoryIds:{183454}'
-  const conditionId   = condition ? BROWSE_CONDITION_IDS[condition] : undefined
-  const filterWithCond = conditionId
-    ? `${baseFilter},conditionIds:{${conditionId}}`
-    : baseFilter
+  // Simple text search — matches the original working proxy approach.
+  // No category or condition filters: the specific query (name + set + number)
+  // is precise enough, and IQR handles any outliers.
+  const params = new URLSearchParams({ q: query, limit: '50' })
 
-  async function browseSearch(filter: string) {
-    const params = new URLSearchParams({ q: query, limit: '50', filter })
-    let res: Response | null = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
-      res = await fetch(`${URLS.browse}?${params}`, {
-        headers: {
-          'Authorization':           `Bearer ${token}`,
-          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
-          'Accept':                  'application/json',
-        },
-      })
-      if (res.ok || res.status < 500) break
-    }
-    if (!res!.ok) {
-      throw new Error(
-        res!.status === 503
-          ? 'eBay price service temporarily unavailable — please try again in a moment'
-          : `eBay Browse API error: HTTP ${res!.status}`,
-      )
-    }
-    return res!.json() as Promise<{
-      itemSummaries?: Array<{
-        title:       string
-        price?:      { value: string }
-        itemWebUrl?: string
-      }>
-    }>
+  let res: Response | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
+    res = await fetch(`${URLS.browse}?${params}`, {
+      headers: {
+        'Authorization':           `Bearer ${token}`,
+        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+        'Accept':                  'application/json',
+      },
+    })
+    if (res.ok || res.status < 500) break
+  }
+  if (!res!.ok) {
+    throw new Error(
+      res!.status === 503
+        ? 'eBay price service temporarily unavailable — please try again in a moment'
+        : `eBay Browse API error: HTTP ${res!.status}`,
+    )
   }
 
-  // First attempt: with condition filter (excludes graded slabs / sealed).
-  // Fallback: without condition filter — some sellers don't set conditionId
-  // correctly, which would cause zero results on the filtered search.
-  let data = await browseSearch(filterWithCond)
-  if (conditionId && !(data.itemSummaries?.length)) {
-    data = await browseSearch(baseFilter)
+  const data = await res!.json() as {
+    itemSummaries?: Array<{
+      title:       string
+      price?:      { value: string }
+      itemWebUrl?: string
+    }>
   }
 
   const raw = (data.itemSummaries ?? [])
