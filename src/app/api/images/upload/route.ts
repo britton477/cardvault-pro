@@ -20,11 +20,11 @@ const THUMB_WIDTH     = 400
 
 export async function POST(request: NextRequest) {
   try {
-    // 30 uploads per 10 minutes — prevents storage abuse
-    const limit = await rateLimit(request, 'image-upload', { max: 30, window: '10m' })
-    if (!limit.success) return tooManyRequests(120)
-
     const { orgId } = await requireAuth()
+
+    // 1000 uploads per 10 minutes per org — supports up to 500 cards × 2 photos per batch
+    const limit = await rateLimit(request, `image-upload:${orgId}`, { max: 1000, window: '10m' })
+    if (!limit.success) return tooManyRequests(120)
 
     const formData = await request.formData()
     const file     = formData.get('file')

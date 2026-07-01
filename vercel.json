@@ -4,6 +4,7 @@
   "buildCommand": "npm run build",
   "installCommand": "npm install",
   "regions": ["lhr1"],
+  "fluid": true,
   "headers": [
     {
       "source": "/api/(.*)",

@@ -24,8 +24,10 @@ import type {
   CardCondition,
 } from '@/types'
 
-// At most 3 identify requests in-flight at once
-const MAX_CONCURRENT = 3
+// At most 5 identify requests in-flight at once.
+// At ~7s avg per card, 5 concurrent ≈ 43 identifications/min — safely under
+// the 60/min rate limit. Speeds up a 112-card scan from ~4.3 min to ~2.6 min.
+const MAX_CONCURRENT = 5
 
 // ── Pure cost-computation ──────────────────────────────────────────────────────
 
@@ -443,25 +445,32 @@ export function useBulkWizard(): BulkWizardHook {
       }
 
       // ── Optionally fire eBay bulk-list with the newly created card IDs ────
-      let ebay_listed    = 0
-      let ebay_failed    = 0
+      // Chunked into batches of 100 (100 × ~1.5s = ~150s per chunk).
+      // The route has maxDuration = 800s — 100-card chunks use well under half.
+      // 500 cards (the import max) = 5 sequential chunks = ~750s total client time.
+      let ebay_listed     = 0
+      let ebay_failed     = 0
       let ebay_failed_ids: string[] = []
+      const EBAY_CHUNK_SIZE = 100
       if (opts.list_on_ebay && result.card_ids.length > 0) {
         try {
-          const ebayRes = await fetch('/api/ebay/bulk-list', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ card_ids: result.card_ids }),
-          })
-          if (ebayRes.ok) {
-            const ebayData = await ebayRes.json() as {
-              succeeded: Array<{ card_id: string }>
-              failed:    Array<{ card_id: string; card_name: string; error: string }>
-              skipped:   Array<{ card_id: string }>
+          for (let i = 0; i < result.card_ids.length; i += EBAY_CHUNK_SIZE) {
+            const chunk = result.card_ids.slice(i, i + EBAY_CHUNK_SIZE)
+            const ebayRes = await fetch('/api/ebay/bulk-list', {
+              method:  'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ card_ids: chunk }),
+            })
+            if (ebayRes.ok) {
+              const ebayData = await ebayRes.json() as {
+                succeeded: Array<{ card_id: string }>
+                failed:    Array<{ card_id: string; card_name: string; error: string }>
+                skipped:   Array<{ card_id: string }>
+              }
+              ebay_listed     += ebayData.succeeded?.length ?? 0
+              ebay_failed     += ebayData.failed?.length    ?? 0
+              ebay_failed_ids  = [...ebay_failed_ids, ...(ebayData.failed ?? []).map(f => f.card_id)]
             }
-            ebay_listed    = ebayData.succeeded?.length ?? 0
-            ebay_failed    = ebayData.failed?.length    ?? 0
-            ebay_failed_ids = (ebayData.failed ?? []).map(f => f.card_id)
           }
         } catch {
           // eBay listing failure is non-fatal — cards were already imported to stock

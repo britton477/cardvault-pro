@@ -215,8 +215,11 @@ export async function POST(request: NextRequest) {
   try {
     const { orgId } = await requireAuth()
 
-    // Rate limit: 30 identify requests per minute per org
-    const limit = await rateLimit(request, `bulk-identify:${orgId}`, { max: 30, window: '1m' })
+    // Rate limit: 60 identify requests per minute per org
+    // Raised from 30 → 60 to give headroom for 112-card bulk imports.
+    // At MAX_CONCURRENT=3 and ~7s per card the real throughput is ~25/min,
+    // so this limit won't be hit in practice — it's a cost-abuse ceiling.
+    const limit = await rateLimit(request, `bulk-identify:${orgId}`, { max: 60, window: '1m' })
     if (!limit.success) return tooManyRequests()
 
     const body  = await request.json() as unknown

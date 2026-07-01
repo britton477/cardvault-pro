@@ -15,6 +15,10 @@
 // =============================================================================
 import { type NextRequest } from 'next/server'
 import { ZodError }         from 'zod'
+
+// Sequential eBay listing: ~1.5s per card × 100 cards per chunk = ~150s.
+// Pro plan allows up to 800s — gives headroom for the largest batches we support.
+export const maxDuration = 800
 import { createAdminClient }            from '@/lib/supabase/server'
 import { requireAuth, ok, serverError, validationError } from '@/lib/api'
 import { listItem, getCredentials, buildListingTitle, buildListingDescription } from '@/lib/ebay'
