@@ -647,45 +647,49 @@ export async function fetchSoldPrices(
   // (e.g. "Dreepy M2A 211/193") so it narrows results to the correct print.
   const query = [cardName, setCode, cardNumber].filter(Boolean).join(' ')
 
-  // Build filter string: always fixed price, always scoped to Trading Cards
-  // (category 183454 = Pokémon TCG), optionally condition
-  const filterParts = ['buyingOptions:{FIXED_PRICE}', 'categoryIds:{183454}']
-  const conditionFilter = condition ? BROWSE_CONDITION_IDS[condition] : undefined
-  if (conditionFilter) filterParts.push(`conditionIds:{${conditionFilter}}`)
+  // Base filters: always fixed price, always scoped to Pokémon TCG (183454)
+  const baseFilter    = 'buyingOptions:{FIXED_PRICE},categoryIds:{183454}'
+  const conditionId   = condition ? BROWSE_CONDITION_IDS[condition] : undefined
+  const filterWithCond = conditionId
+    ? `${baseFilter},conditionIds:{${conditionId}}`
+    : baseFilter
 
-  const params = new URLSearchParams({
-    q:      query,
-    limit:  '50',
-    filter: filterParts.join(','),
-  })
-
-  // Retry up to 2 times on transient 5xx errors
-  let res: Response | null = null
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
-    res = await fetch(`${URLS.browse}?${params}`, {
-      headers: {
-        'Authorization':           `Bearer ${token}`,
-        'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
-        'Accept':                  'application/json',
-      },
-    })
-    if (res.ok || res.status < 500) break
-  }
-  if (!res!.ok) {
-    throw new Error(
-      res!.status === 503
-        ? 'eBay price service temporarily unavailable — please try again in a moment'
-        : `eBay Browse API error: HTTP ${res!.status}`,
-    )
-  }
-
-  const data = await res!.json() as {
-    itemSummaries?: Array<{
-      title:       string
-      price?:      { value: string }
-      itemWebUrl?: string
+  async function browseSearch(filter: string) {
+    const params = new URLSearchParams({ q: query, limit: '50', filter })
+    let res: Response | null = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1000))
+      res = await fetch(`${URLS.browse}?${params}`, {
+        headers: {
+          'Authorization':           `Bearer ${token}`,
+          'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+          'Accept':                  'application/json',
+        },
+      })
+      if (res.ok || res.status < 500) break
+    }
+    if (!res!.ok) {
+      throw new Error(
+        res!.status === 503
+          ? 'eBay price service temporarily unavailable — please try again in a moment'
+          : `eBay Browse API error: HTTP ${res!.status}`,
+      )
+    }
+    return res!.json() as Promise<{
+      itemSummaries?: Array<{
+        title:       string
+        price?:      { value: string }
+        itemWebUrl?: string
+      }>
     }>
+  }
+
+  // First attempt: with condition filter (excludes graded slabs / sealed).
+  // Fallback: without condition filter — some sellers don't set conditionId
+  // correctly, which would cause zero results on the filtered search.
+  let data = await browseSearch(filterWithCond)
+  if (conditionId && !(data.itemSummaries?.length)) {
+    data = await browseSearch(baseFilter)
   }
 
   const raw = (data.itemSummaries ?? [])
