@@ -69,15 +69,32 @@ export function resizeImageToBase64(file: File): Promise<string> {
 }
 
 /**
- * Read a File as a data-URL (for preview thumbnails).
- * Unlike resizeImageToBase64, this preserves the full image and includes the
- * data-URL prefix, making it suitable for <img src={...}> without further processing.
+ * Read a File or Blob as a data-URL (for preview thumbnails and crop output).
+ * Includes the data-URL prefix, making it suitable for <img src={...}>.
  */
-export function fileToDataUrl(file: File): Promise<string> {
+export function fileToDataUrl(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload  = () => resolve(reader.result as string)
     reader.onerror = () => reject(new Error('Failed to read file'))
     reader.readAsDataURL(file)
   })
+}
+
+/**
+ * Convert a base64 data-URL back into a File object.
+ *
+ * Two uses:
+ *   1. Feed a scanned card's data-URL preview into CropModal (file mode)
+ *   2. Convert cropped/scanned images to File for the /api/images/upload route
+ *
+ * Browser-only — uses atob. Safe to call from React event handlers / hooks.
+ */
+export function dataUrlToFile(dataUrl: string, filename: string): File {
+  const [header, base64] = dataUrl.split(',')
+  const mime    = header.match(/:(.*?);/)?.[1] ?? 'image/jpeg'
+  const binary  = atob(base64)
+  const bytes   = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new File([bytes], filename, { type: mime })
 }

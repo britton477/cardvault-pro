@@ -11,12 +11,19 @@
 //
 // Inline editing: clicking any field opens a small input/select inline.
 // The override is stored in card.overrides (never mutates AI data).
+//
+// List price: editable on the scan row — auto-suggests 10% above eBay avg,
+// flows through to the import + eBay listing step.
+//
+// Image crop: CropModal (file mode) on both the primary thumbnail and any
+// additional photos — updates the in-memory data URL without a server round-trip.
 // =============================================================================
 import { useState, useRef, useCallback } from 'react'
-import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink } from 'lucide-react'
-import { cn, formatGBP }  from '@/lib/utils'
-import { resizeImageToBase64 } from '@/lib/image'
+import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink, Crop } from 'lucide-react'
+import { cn, formatGBP }        from '@/lib/utils'
+import { resizeImageToBase64, fileToDataUrl, dataUrlToFile } from '@/lib/image'
 import { CONDITIONS, FOIL_TYPES } from '@/components/stock/cardConstants'
+import { CropModal }            from '@/components/stock/CropModal'
 import type { BulkWizardCard, CardCondition } from '@/types'
 
 interface CardScanRowProps {
@@ -29,7 +36,7 @@ interface CardScanRowProps {
 
 // ── Status pill ────────────────────────────────────────────────────────────────
 
-function StatusPill({ status, error }: { status: BulkWizardCard['status']; error?: string }) {
+function StatusPill({ status }: { status: BulkWizardCard['status'] }) {
   const styles: Record<BulkWizardCard['status'], string> = {
     queued:      'bg-secondary text-muted-foreground',
     identifying: 'bg-blue-500/15 text-blue-400',
@@ -44,7 +51,6 @@ function StatusPill({ status, error }: { status: BulkWizardCard['status']; error
     ready:       'Ready',
     error:       'Error',
   }
-
   return (
     <span className={cn(
       'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
@@ -74,7 +80,7 @@ function InlineText({
         onChange={e => setDraft(e.target.value)}
         onBlur={() => { onSave(draft); setEditing(false) }}
         onKeyDown={e => {
-          if (e.key === 'Enter') { onSave(draft); setEditing(false) }
+          if (e.key === 'Enter')  { onSave(draft); setEditing(false) }
           if (e.key === 'Escape') { setDraft(value); setEditing(false) }
         }}
         className={cn(
@@ -159,10 +165,10 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
   }
 
   const CONDITION_OPTIONS = CONDITIONS.filter(c => c.value !== 'Sealed')
-  const FOIL_OPTIONS = FOIL_TYPES.map(f => ({ value: f, label: f }))
+  const FOIL_OPTIONS      = FOIL_TYPES.map(f => ({ value: f, label: f }))
 
   // ── Additional photos ──────────────────────────────────────────────────────
-  const addPhotoRef = useRef<HTMLInputElement>(null)
+  const addPhotoRef      = useRef<HTMLInputElement>(null)
   const additionalImages = card.additionalImages ?? []
 
   const handleAddPhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,9 +184,7 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
           return `data:image/jpeg;base64,${b64}`
         })
       )
-      onUpdate(card.uid, {
-        additionalImages: [...additionalImages, ...newImgs],
-      })
+      onUpdate(card.uid, { additionalImages: [...additionalImages, ...newImgs] })
     } catch {
       // Additional photos are optional — silently ignore resize errors
     }
@@ -192,192 +196,318 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
     })
   }, [card.uid, additionalImages, onUpdate])
 
+  // ── Crop ──────────────────────────────────────────────────────────────────
+  // cropTarget: null = closed, 'primary' = main thumbnail, number = additionalImages index
+  const [cropTarget, setCropTarget] = useState<'primary' | number | null>(null)
+
+  // Which data URL goes into the crop modal?
+  const cropSrc = cropTarget === null
+    ? null
+    : cropTarget === 'primary'
+      ? card.imageDataUrl
+      : additionalImages[cropTarget] ?? null
+
+  // Convert data URL → File for CropModal (file mode)
+  const cropFile = cropSrc ? dataUrlToFile(cropSrc, 'crop-source.jpg') : null
+
+  const handleCropConfirm = useCallback(async (blob: Blob) => {
+    try {
+      const newDataUrl = await fileToDataUrl(blob)
+      if (cropTarget === 'primary') {
+        onUpdate(card.uid, { imageDataUrl: newDataUrl })
+      } else if (typeof cropTarget === 'number') {
+        const updated = [...additionalImages]
+        updated[cropTarget] = newDataUrl
+        onUpdate(card.uid, { additionalImages: updated })
+      }
+    } catch {
+      // Silently ignore — original image remains unchanged
+    } finally {
+      setCropTarget(null)
+    }
+  }, [card.uid, cropTarget, additionalImages, onUpdate])
+
+  // ── List price helpers ─────────────────────────────────────────────────────
+  const suggestedPrice = card.ebay_avg_sold
+    ? Math.round(card.ebay_avg_sold * 1.1 * 100) / 100
+    : null
+
   return (
-    <div className={cn(
-      'flex items-start gap-3 rounded-lg p-3 border transition-colors',
-      isError  ? 'border-red-500/30 bg-red-500/5'  : 'border-border bg-card',
-      isPending && 'animate-pulse-subtle',
-    )}>
-      {/* Thumbnail */}
+    <>
       <div className={cn(
-        'flex-shrink-0 w-12 h-16 rounded-md overflow-hidden border border-border',
-        'flex items-center justify-center bg-secondary/40',
+        'flex items-start gap-3 rounded-lg p-3 border transition-colors',
+        isError  ? 'border-red-500/30 bg-red-500/5' : 'border-border bg-card',
+        isPending && 'animate-pulse-subtle',
       )}>
-        {card.imageDataUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={card.imageDataUrl}
-            alt={cardName || `Card ${index + 1}`}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <span className="text-lg text-muted-foreground/30">🃏</span>
-        )}
-      </div>
 
-      {/* Card details */}
-      <div className="flex-1 min-w-0 space-y-1">
-        {/* Row 1: name + status */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {isReady || isPending ? (
-            <div className="text-sm font-medium text-foreground min-w-0 flex-1">
-              {isReady ? (
-                <InlineText
-                  value={cardName}
-                  placeholder="Unknown card"
-                  onSave={v => setOverride('card_name', v)}
-                />
-              ) : (
-                <span className="text-muted-foreground">{cardName || `Card ${index + 1}`}</span>
-              )}
-            </div>
-          ) : isError ? (
-            <span className="text-sm text-red-400 font-medium">
-              {card.error ?? 'Identification failed'}
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground">{`Card ${index + 1}`}</span>
-          )}
-
-          <StatusPill status={card.status} error={card.error} />
-        </div>
-
-        {/* Row 2: set · number · condition · foil */}
-        {isReady && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-            <InlineText
-              value={setCode}
-              placeholder="Set code"
-              onSave={v => setOverride('set_code', v.toUpperCase())}
-              className="font-mono uppercase"
-            />
-            <span className="text-border">·</span>
-            <InlineText
-              value={cardNumber}
-              placeholder="#"
-              onSave={v => setOverride('card_number', v)}
-              className="font-mono"
-            />
-            <span className="text-border">·</span>
-            <InlineSelect<CardCondition>
-              value={condition}
-              options={CONDITION_OPTIONS}
-              onSave={v => setOverride('condition', v)}
-            />
-            <span className="text-border">·</span>
-            <InlineSelect<string>
-              value={foilType}
-              options={FOIL_OPTIONS}
-              onSave={v => setOverride('foil_type', v)}
-            />
-            {card.confidence > 0 && card.confidence < 0.7 && (
-              <span className="text-amber-400/80 text-[10px]">
-                ⚠ Low confidence — verify
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Row 3: eBay price + sold search link */}
-        {isReady && (
-          <div className="flex items-center gap-1.5 text-xs flex-wrap">
-            {card.ebay_avg_sold ? (
-              <>
-                <span className="text-green-400 font-semibold tabular-nums">
-                  {formatGBP(card.ebay_avg_sold)}
-                </span>
-                <span className="text-muted-foreground/60">
-                  avg sold ({card.ebay_sample_count} sales)
-                </span>
-              </>
-            ) : (
-              <span className="text-muted-foreground/50 italic">No eBay price found</span>
-            )}
-            {/* Always show sold-search link so user can verify or find price manually */}
-            <a
-              href={`https://www.ebay.co.uk/sch/i.html?${new URLSearchParams({
-                _nkw:        [cardName, setCode, cardNumber.split('/')[0]].filter(Boolean).join(' '),
-                LH_Sold:     '1',
-                LH_Complete: '1',
-                _sacat:      '183454',  // Pokémon TCG category
-              }).toString()}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="View eBay sold listings"
-              className="inline-flex items-center gap-0.5 text-muted-foreground/40 hover:text-primary/70 transition-colors ml-0.5"
-            >
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
-        )}
-
-        {/* Row 4: Additional photos (back, edge, damage) */}
-        {isReady && (
-          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-            {additionalImages.map((src, idx) => (
-              <div
-                key={idx}
-                className="group relative w-7 h-9 rounded overflow-hidden border border-border flex-shrink-0"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={src} alt={`Photo ${idx + 2}`} className="w-full h-full object-cover" />
+        {/* ── Thumbnail with crop on hover ──────────────────────────── */}
+        <div className={cn(
+          'group relative flex-shrink-0 w-12 h-16 rounded-md overflow-hidden border border-border',
+          'flex items-center justify-center bg-secondary/40',
+        )}>
+          {card.imageDataUrl ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={card.imageDataUrl}
+                alt={cardName || `Card ${index + 1}`}
+                className="w-full h-full object-cover"
+              />
+              {isReady && (
                 <button
-                  onClick={() => removeAdditionalImage(idx)}
-                  title="Remove photo"
+                  onClick={() => setCropTarget('primary')}
+                  title="Crop image"
                   className={cn(
                     'absolute inset-0 flex items-center justify-center',
                     'bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity',
                   )}
                 >
-                  <X className="h-3 w-3 text-white" />
+                  <Crop className="h-4 w-4 text-white" />
                 </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => addPhotoRef.current?.click()}
-              title="Add another photo (card back, edge, damage)"
-              className={cn(
-                'w-7 h-9 rounded border border-dashed flex-shrink-0',
-                'flex items-center justify-center transition-colors',
-                additionalImages.length === 0
-                  ? 'border-border/50 text-muted-foreground/40 hover:border-primary/50 hover:text-primary/60'
-                  : 'border-border/40 text-muted-foreground/30 hover:border-primary/40 hover:text-primary/50',
               )}
-            >
-              <ImagePlus className="h-3 w-3" />
-            </button>
-            <input
-              ref={addPhotoRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              className="hidden"
-              onChange={handleAddPhotos}
-            />
+            </>
+          ) : (
+            <span className="text-lg text-muted-foreground/30">🃏</span>
+          )}
+        </div>
+
+        {/* ── Card details ──────────────────────────────────────────── */}
+        <div className="flex-1 min-w-0 space-y-1">
+
+          {/* Row 1: name + status */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {isReady || isPending ? (
+              <div className="text-sm font-medium text-foreground min-w-0 flex-1">
+                {isReady ? (
+                  <InlineText
+                    value={cardName}
+                    placeholder="Unknown card"
+                    onSave={v => setOverride('card_name', v)}
+                  />
+                ) : (
+                  <span className="text-muted-foreground">{cardName || `Card ${index + 1}`}</span>
+                )}
+              </div>
+            ) : isError ? (
+              <span className="text-sm text-red-400 font-medium">
+                {card.error ?? 'Identification failed'}
+              </span>
+            ) : (
+              <span className="text-sm text-muted-foreground">{`Card ${index + 1}`}</span>
+            )}
+            <StatusPill status={card.status} />
           </div>
-        )}
+
+          {/* Row 2: set · number · condition · foil */}
+          {isReady && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+              <InlineText
+                value={setCode}
+                placeholder="Set code"
+                onSave={v => setOverride('set_code', v.toUpperCase())}
+                className="font-mono uppercase"
+              />
+              <span className="text-border">·</span>
+              <InlineText
+                value={cardNumber}
+                placeholder="#"
+                onSave={v => setOverride('card_number', v)}
+                className="font-mono"
+              />
+              <span className="text-border">·</span>
+              <InlineSelect<CardCondition>
+                value={condition}
+                options={CONDITION_OPTIONS}
+                onSave={v => setOverride('condition', v)}
+              />
+              <span className="text-border">·</span>
+              <InlineSelect<string>
+                value={foilType}
+                options={FOIL_OPTIONS}
+                onSave={v => setOverride('foil_type', v)}
+              />
+              {card.confidence > 0 && card.confidence < 0.7 && (
+                <span className="text-amber-400/80 text-[10px]">
+                  ⚠ Low confidence — verify
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Row 3: eBay avg price + sold search link */}
+          {isReady && (
+            <div className="flex items-center gap-1.5 text-xs flex-wrap">
+              {card.ebay_avg_sold ? (
+                <>
+                  <span className="text-green-400 font-semibold tabular-nums">
+                    {formatGBP(card.ebay_avg_sold)}
+                  </span>
+                  <span className="text-muted-foreground/60">
+                    avg sold ({card.ebay_sample_count} sales)
+                  </span>
+                </>
+              ) : (
+                <span className="text-muted-foreground/50 italic">No eBay price found</span>
+              )}
+              {/* eBay sold search — always visible so user can verify manually */}
+              <a
+                href={`https://www.ebay.co.uk/sch/i.html?${new URLSearchParams({
+                  _nkw:        [cardName, setCode, cardNumber.split('/')[0]].filter(Boolean).join(' '),
+                  LH_Sold:     '1',
+                  LH_Complete: '1',
+                  _sacat:      '183454',
+                }).toString()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View eBay sold listings"
+                className="inline-flex items-center gap-0.5 text-muted-foreground/40 hover:text-primary/70 transition-colors ml-0.5"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          )}
+
+          {/* Row 4: List price — set per-card here, flows to import + eBay listing */}
+          {isReady && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground/60 flex-shrink-0">List at</span>
+              <div className="relative flex items-center">
+                <span className="absolute left-2 text-muted-foreground/50 text-[11px] pointer-events-none">£</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={card.listed_price ?? ''}
+                  onChange={e => onUpdate(card.uid, {
+                    listed_price: e.target.value !== '' ? parseFloat(e.target.value) : null,
+                  })}
+                  placeholder={suggestedPrice ? suggestedPrice.toFixed(2) : '0.00'}
+                  className={cn(
+                    'w-20 rounded border bg-secondary px-5 py-0.5 text-xs text-foreground tabular-nums',
+                    'focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary',
+                    card.listed_price !== null
+                      ? 'border-primary/40 bg-primary/5'
+                      : 'border-border',
+                  )}
+                />
+              </div>
+              {/* Quick-fill: 10% above eBay avg */}
+              {suggestedPrice && card.listed_price === null && (
+                <button
+                  type="button"
+                  onClick={() => onUpdate(card.uid, { listed_price: suggestedPrice })}
+                  title={`Set to ${formatGBP(suggestedPrice)} (10% above eBay avg)`}
+                  className="text-[10px] text-muted-foreground/40 hover:text-primary/60 transition-colors"
+                >
+                  +10%
+                </button>
+              )}
+              {card.listed_price !== null && (
+                <button
+                  type="button"
+                  onClick={() => onUpdate(card.uid, { listed_price: null })}
+                  title="Clear list price"
+                  className="text-muted-foreground/40 hover:text-red-400/60 transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Row 5: Additional photos + add button */}
+          {isReady && (
+            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+              {additionalImages.map((src, idx) => (
+                <div
+                  key={idx}
+                  className="group relative w-7 h-9 rounded overflow-hidden border border-border flex-shrink-0"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={src} alt={`Photo ${idx + 2}`} className="w-full h-full object-cover" />
+                  {/* Hover overlay: crop left, delete right */}
+                  <div className={cn(
+                    'absolute inset-0 flex items-center justify-center gap-0.5',
+                    'bg-black/65 opacity-0 group-hover:opacity-100 transition-opacity',
+                  )}>
+                    <button
+                      onClick={() => setCropTarget(idx)}
+                      title="Crop photo"
+                      className="p-0.5 text-white hover:text-primary transition-colors"
+                    >
+                      <Crop className="h-2.5 w-2.5" />
+                    </button>
+                    <button
+                      onClick={() => removeAdditionalImage(idx)}
+                      title="Remove photo"
+                      className="p-0.5 text-white hover:text-red-400 transition-colors"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Add photo button */}
+              <button
+                type="button"
+                onClick={() => addPhotoRef.current?.click()}
+                title="Add another photo (card back, edge, damage)"
+                className={cn(
+                  'w-7 h-9 rounded border border-dashed flex-shrink-0',
+                  'flex items-center justify-center transition-colors',
+                  additionalImages.length === 0
+                    ? 'border-border/50 text-muted-foreground/40 hover:border-primary/50 hover:text-primary/60'
+                    : 'border-border/40 text-muted-foreground/30 hover:border-primary/40 hover:text-primary/50',
+                )}
+              >
+                <ImagePlus className="h-3 w-3" />
+              </button>
+
+              <input
+                ref={addPhotoRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                onChange={handleAddPhotos}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* ── Actions ──────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {isError && (
+            <button
+              onClick={() => onRetry(card.uid)}
+              title="Retry identification"
+              className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            onClick={() => onRemove(card.uid)}
+            title="Remove card"
+            className="rounded-md p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {isError && (
-          <button
-            onClick={() => onRetry(card.uid)}
-            title="Retry identification"
-            className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-        )}
-        <button
-          onClick={() => onRemove(card.uid)}
-          title="Remove card"
-          className="rounded-md p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
+      {/* ── Crop modal — rendered outside the row so it overlays the full page ── */}
+      {cropFile && (
+        <CropModal
+          open={cropTarget !== null}
+          mode="file"
+          file={cropFile}
+          title={cropTarget === 'primary' ? 'Crop card photo' : 'Crop additional photo'}
+          onCancel={() => setCropTarget(null)}
+          onConfirmFile={blob => { void handleCropConfirm(blob) }}
+        />
+      )}
+    </>
   )
 }

@@ -14,7 +14,7 @@
 // They are never written to localStorage, Supabase Storage, or any DB column.
 // =============================================================================
 import { useState, useCallback, useMemo, useRef } from 'react'
-import { resizeImageToBase64 }                      from '@/lib/image'
+import { resizeImageToBase64, dataUrlToFile }       from '@/lib/image'
 import type {
   BulkWizardCard,
   BulkWizardPhase,
@@ -103,6 +103,53 @@ async function apiPrice(
     throw new Error(err.error ?? `Price lookup failed: ${res.status}`)
   }
   return res.json() as Promise<BulkPriceResponse>
+}
+
+// ── Photo upload helpers ───────────────────────────────────────────────────────
+
+/**
+ * Upload one image (from a base64 data-URL) to /api/images/upload.
+ * Returns silently on failure — a missing photo is never fatal.
+ */
+async function uploadPhoto(dataUrl: string, cardId: string, position: number): Promise<void> {
+  try {
+    const file = dataUrlToFile(dataUrl, `card-${cardId}-${position}.jpg`)
+    const form = new FormData()
+    form.append('file',     file)
+    form.append('card_id',  cardId)
+    form.append('position', String(position))
+    const res = await fetch('/api/images/upload', { method: 'POST', body: form })
+    if (!res.ok) console.warn(`[BulkWizard] Photo upload failed: ${res.status}`)
+  } catch (err) {
+    console.warn('[BulkWizard] Photo upload error:', err)
+  }
+}
+
+/**
+ * Upload all images for every card in the batch.
+ * Runs 3 concurrent uploads at a time to stay within the 30/10min rate limit.
+ * Each card's primary image is position 0; additional photos are 1, 2, …
+ */
+async function uploadPhotosForCards(
+  cards:    BulkWizardCard[],
+  cardIds:  string[],
+): Promise<void> {
+  // Build a flat list of (dataUrl, cardId, position) triples
+  const tasks: Array<() => Promise<void>> = []
+  cards.forEach((card, i) => {
+    const cardId = cardIds[i]
+    if (!cardId) return
+    if (card.imageDataUrl)
+      tasks.push(() => uploadPhoto(card.imageDataUrl, cardId, 0))
+    card.additionalImages.forEach((url, pos) =>
+      tasks.push(() => uploadPhoto(url, cardId, pos + 1))
+    )
+  })
+
+  // Drain tasks 3 at a time
+  for (let i = 0; i < tasks.length; i += 3) {
+    await Promise.allSettled(tasks.slice(i, i + 3).map(fn => fn()))
+  }
 }
 
 // ── Hook ───────────────────────────────────────────────────────────────────────
@@ -345,26 +392,31 @@ export function useBulkWizard(): BulkWizardHook {
       const computed = computeCosts(cards, totalSpend)
       const markup   = opts.markup_pct ?? 0
 
-      const payload = computed
-        .filter(c => c.status === 'ready' && c.card_name)
-        .map(c => {
-          // If listing on eBay, calculate list price from markup % over eBay avg sold
-          const listed_price = opts.list_on_ebay && c.ebay_avg_sold
-            ? Math.round(c.ebay_avg_sold * (1 + markup / 100) * 100) / 100
-            : null
-          return {
-            card_name:      c.overrides.card_name   ?? c.card_name,
-            set_code:       c.overrides.set_code    ?? c.set_code,
-            card_number:    c.overrides.card_number ?? c.card_number,
-            condition:      c.overrides.condition   ?? c.condition,
-            foil_type:      c.overrides.foil_type   ?? c.foil_type,
-            language:       c.language,
-            purchase_price: c.proportional_cost ?? 0,
-            ebay_avg_sold:  c.ebay_avg_sold,
-            listed_price,
-            source:         opts.source || 'Bulk Wizard',
-          }
-        })
+      // Keep a ref to the original ready cards so we can match them to card_ids after import
+      const readyCards = computed.filter(c => c.status === 'ready' && c.card_name)
+
+      const payload = readyCards.map(c => {
+        // Priority: per-card price set on scan row → markup calculation → null
+        const listed_price =
+          c.listed_price !== null
+            ? c.listed_price
+            : opts.list_on_ebay && c.ebay_avg_sold
+              ? Math.round(c.ebay_avg_sold * (1 + markup / 100) * 100) / 100
+              : null
+
+        return {
+          card_name:      c.overrides.card_name   ?? c.card_name,
+          set_code:       c.overrides.set_code    ?? c.set_code,
+          card_number:    c.overrides.card_number ?? c.card_number,
+          condition:      c.overrides.condition   ?? c.condition,
+          foil_type:      c.overrides.foil_type   ?? c.foil_type,
+          language:       c.language,
+          purchase_price: c.proportional_cost ?? 0,
+          ebay_avg_sold:  c.ebay_avg_sold,
+          listed_price,
+          source:         opts.source || 'Bulk Wizard',
+        }
+      })
 
       const res = await fetch('/api/bulk-wizard/import', {
         method:  'POST',
@@ -382,6 +434,13 @@ export function useBulkWizard(): BulkWizardHook {
       }
 
       const result = await res.json() as { created: number; card_ids: string[] }
+
+      // ── Upload photos (primary + additional) before eBay listing ─────────
+      // Photos must be in storage before the bulk-list route reads card.photos.
+      // Runs 3 concurrent uploads; failures are silent — cards are always in stock.
+      if (result.card_ids.length > 0) {
+        await uploadPhotosForCards(readyCards, result.card_ids)
+      }
 
       // ── Optionally fire eBay bulk-list with the newly created card IDs ────
       let ebay_listed    = 0

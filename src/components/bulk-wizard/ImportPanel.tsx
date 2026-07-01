@@ -65,14 +65,21 @@ export function ImportPanel({
   const totalProfit  = readyCards.reduce((s, c) => s + (c.profit_potential ?? 0), 0)
   const lots         = lotsData?.data ?? []
 
-  // Cards that can be listed on eBay (have an eBay avg price to calculate from)
-  const listableCount   = pricedCards.length
+  // Cards that can be listed: have a manually set list price OR eBay avg to derive one from
+  const listableCards   = readyCards.filter(c =>
+    c.listed_price !== null || ((c.ebay_avg_sold ?? 0) > 0)
+  )
+  const listableCount   = listableCards.length
   const unlistableCount = readyCards.length - listableCount
 
+  // Effective list price for a card: manual override > markup calculation
+  function effectiveListPrice(c: BulkWizardCard): number {
+    if (c.listed_price !== null) return c.listed_price
+    return Math.round((c.ebay_avg_sold ?? 0) * (1 + markupPct / 100) * 100) / 100
+  }
+
   // Estimated total list value
-  const totalListValue = pricedCards.reduce((s, c) => {
-    return s + Math.round((c.ebay_avg_sold ?? 0) * (1 + markupPct / 100) * 100) / 100
-  }, 0)
+  const totalListValue = listableCards.reduce((s, c) => s + effectiveListPrice(c), 0)
 
   async function handleImport() {
     try {
@@ -355,18 +362,23 @@ export function ImportPanel({
                     <span className="text-right">List price</span>
                   </div>
                   <div className="max-h-40 overflow-y-auto divide-y divide-border/50">
-                    {pricedCards.map(c => {
-                      const listPrice = Math.round((c.ebay_avg_sold ?? 0) * (1 + markupPct / 100) * 100) / 100
+                    {listableCards.map(c => {
+                      const listPrice = effectiveListPrice(c)
+                      const isManual  = c.listed_price !== null
                       return (
                         <div key={c.uid} className="grid grid-cols-3 px-3 py-1.5 text-xs">
                           <span className="text-foreground truncate pr-2">
                             {c.overrides.card_name ?? c.card_name}
                           </span>
                           <span className="text-right text-muted-foreground tabular-nums">
-                            {formatGBP(c.ebay_avg_sold ?? 0)}
+                            {c.ebay_avg_sold ? formatGBP(c.ebay_avg_sold) : '—'}
                           </span>
-                          <span className="text-right text-foreground font-medium tabular-nums">
+                          <span className={cn(
+                            'text-right font-medium tabular-nums',
+                            isManual ? 'text-primary' : 'text-foreground',
+                          )}>
                             {formatGBP(listPrice)}
+                            {isManual && <span className="ml-0.5 text-[9px] text-primary/60">manual</span>}
                           </span>
                         </div>
                       )
