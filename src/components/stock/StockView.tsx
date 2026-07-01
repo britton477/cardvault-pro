@@ -322,7 +322,10 @@ export function StockView() {
     let updated = 0
     let failed  = 0
     try {
-      for (const card of cards) {
+      for (const [i, card] of cards.entries()) {
+        // Small delay after the first card to avoid saturating the rate limit
+        // when refreshing a large selection (100ms * index keeps well under 100/min).
+        if (i > 0) await new Promise(r => setTimeout(r, 100))
         try {
           const qs = new URLSearchParams({ card_name: card.card_name })
           if (card.set_code)    qs.set('set_code',    card.set_code)

@@ -15,8 +15,9 @@ import { withCache } from '@/lib/cache'
 
 export async function GET(request: NextRequest) {
   try {
-    // 20 eBay price lookups per user per minute — each call costs eBay API quota
-    const limit = await rateLimit(request, 'ebay-price', { max: 20, window: '1m' })
+    // 100 eBay price lookups per user per minute — cached results are fast,
+    // real eBay API calls are sequential in the bulk refresh so quota is safe.
+    const limit = await rateLimit(request, 'ebay-price', { max: 100, window: '1m' })
     if (!limit.success) return tooManyRequests(60)
 
     const { orgId } = await requireAuth()
