@@ -76,13 +76,12 @@ Sun & Moon (2017–2019):       SUM, GRI, BUS, CIN, UPR, FLI, CES, LOT, TEU, DRM
 XY (2014–2016):               XY, FLF, FFI, PHF, PRC, ROS, AOR, BKT, BKP, FCO, STS, EVO
 
 ═══ HOW TO FIND THE CARD NUMBER ══════════════════════════════════════
-The number appears as "NNN/TTT" — NNN is the card's own number, TTT is the set total.
-Output ONLY NNN — the part BEFORE the slash.
-• "181/159" → "181"  (a number ABOVE the set total is valid — these are secret/illustration rares)
-• "025/198" → "025"
-• "TG01/TG30" → "TG01"
-• "SWSH001" → "SWSH001"
-NEVER output the set total. If the number is not clearly legible, return "" — do NOT guess.
+The number appears as "NNN/TTT" — output the FULL string including the set total.
+• "181/159" → "181/159"  (a number ABOVE the set total is valid — these are secret/illustration rares)
+• "025/198" → "025/198"
+• "TG01/TG30" → "TG01/TG30"
+• "SWSH001" has no slash — output "SWSH001" as-is
+If the number is not clearly legible, return "" — do NOT guess.
 
 ═══ CONDITION ════════════════════════════════════════════════════════
 THE DEFAULT IS ALWAYS NM. Only downgrade if you can CLEARLY AND UNMISTAKEABLY see damage:
@@ -116,7 +115,7 @@ Return ONLY valid JSON with no markdown, no explanation:
 {
   "card_name":   "<English name at top of card>",
   "set_code":    "<use the symbol/design table below>",
-  "card_number": "<digits BEFORE the slash only — '4' from '4/102', '25' from '25/64'>",
+  "card_number": "<FULL number including set total — '4/102' from '4/102', '25/64' from '25/64'>",
   "condition":   "<NM | LP | MP | HP> — DEFAULT IS NM",
   "foil_type":   "<Holo | Reverse Holo | Normal>",
   "language":    "<EN | JP | DE | FR | ES | IT | PT | KO | ZH>",

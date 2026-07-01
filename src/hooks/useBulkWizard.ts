@@ -132,7 +132,17 @@ export interface BulkWizardHook {
   setTotalSpend:   (n: number) => void
   setLockedSetCode:(s: string) => void
   setRetroMode:    (on: boolean) => void
-  importAll:       (opts: { lot_id?: string; source?: string }) => Promise<{ created: number }>
+  importAll:       (opts: {
+    lot_id?:       string
+    source?:       string
+    list_on_ebay?: boolean
+    markup_pct?:   number
+  }) => Promise<{
+    created:           number
+    ebay_listed?:      number
+    ebay_failed?:      number
+    ebay_failed_ids?:  string[]
+  }>
 }
 
 export function useBulkWizard(): BulkWizardHook {
@@ -266,6 +276,7 @@ export function useBulkWizard(): BulkWizardHook {
         proportional_cost: null,
         profit_potential:  null,
         roi_pct:           null,
+        listed_price:      null,
       }
 
       setCards(prev => [...prev, blankCard])
@@ -321,26 +332,39 @@ export function useBulkWizard(): BulkWizardHook {
   }, [])
 
   // ── Import ────────────────────────────────────────────────────────────────
-  const importAll = useCallback(async (opts: { lot_id?: string; source?: string }) => {
+  const importAll = useCallback(async (opts: {
+    lot_id?:       string
+    source?:       string
+    list_on_ebay?: boolean
+    markup_pct?:   number
+  }) => {
     setIsImporting(true)
     setImportError(null)
 
     try {
       const computed = computeCosts(cards, totalSpend)
+      const markup   = opts.markup_pct ?? 0
 
       const payload = computed
         .filter(c => c.status === 'ready' && c.card_name)
-        .map(c => ({
-          card_name:      c.overrides.card_name   ?? c.card_name,
-          set_code:       c.overrides.set_code    ?? c.set_code,
-          card_number:    c.overrides.card_number ?? c.card_number,
-          condition:      c.overrides.condition   ?? c.condition,
-          foil_type:      c.overrides.foil_type   ?? c.foil_type,
-          language:       c.language,
-          purchase_price: c.proportional_cost ?? 0,
-          ebay_avg_sold:  c.ebay_avg_sold,
-          source:         opts.source || 'Bulk Wizard',
-        }))
+        .map(c => {
+          // If listing on eBay, calculate list price from markup % over eBay avg sold
+          const listed_price = opts.list_on_ebay && c.ebay_avg_sold
+            ? Math.round(c.ebay_avg_sold * (1 + markup / 100) * 100) / 100
+            : null
+          return {
+            card_name:      c.overrides.card_name   ?? c.card_name,
+            set_code:       c.overrides.set_code    ?? c.set_code,
+            card_number:    c.overrides.card_number ?? c.card_number,
+            condition:      c.overrides.condition   ?? c.condition,
+            foil_type:      c.overrides.foil_type   ?? c.foil_type,
+            language:       c.language,
+            purchase_price: c.proportional_cost ?? 0,
+            ebay_avg_sold:  c.ebay_avg_sold,
+            listed_price,
+            source:         opts.source || 'Bulk Wizard',
+          }
+        })
 
       const res = await fetch('/api/bulk-wizard/import', {
         method:  'POST',
@@ -358,8 +382,35 @@ export function useBulkWizard(): BulkWizardHook {
       }
 
       const result = await res.json() as { created: number; card_ids: string[] }
+
+      // ── Optionally fire eBay bulk-list with the newly created card IDs ────
+      let ebay_listed    = 0
+      let ebay_failed    = 0
+      let ebay_failed_ids: string[] = []
+      if (opts.list_on_ebay && result.card_ids.length > 0) {
+        try {
+          const ebayRes = await fetch('/api/ebay/bulk-list', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ card_ids: result.card_ids }),
+          })
+          if (ebayRes.ok) {
+            const ebayData = await ebayRes.json() as {
+              succeeded: Array<{ card_id: string }>
+              failed:    Array<{ card_id: string; card_name: string; error: string }>
+              skipped:   Array<{ card_id: string }>
+            }
+            ebay_listed    = ebayData.succeeded?.length ?? 0
+            ebay_failed    = ebayData.failed?.length    ?? 0
+            ebay_failed_ids = (ebayData.failed ?? []).map(f => f.card_id)
+          }
+        } catch {
+          // eBay listing failure is non-fatal — cards were already imported to stock
+        }
+      }
+
       setPhase('import')
-      return { created: result.created }
+      return { created: result.created, ebay_listed, ebay_failed, ebay_failed_ids }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Import failed'
       setImportError(msg)

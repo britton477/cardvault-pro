@@ -344,6 +344,9 @@ export interface BulkWizardCard {
   proportional_cost: number | null
   profit_potential:  number | null
   roi_pct:           number | null
+
+  /** Desired eBay list price — computed from markup % in Phase 3, overridable per card */
+  listed_price: number | null
 }
 
 // Bulk Wizard API shapes
@@ -392,6 +395,7 @@ export interface BulkImportCard {
   language:       string
   purchase_price: number
   ebay_avg_sold:  number | null
+  listed_price?:  number | null
   lot_id?:        string | null
   source?:        string
   notes?:         string

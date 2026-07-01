@@ -296,7 +296,7 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             {/* Always show sold-search link so user can verify or find price manually */}
             <a
               href={`https://www.ebay.co.uk/sch/i.html?${new URLSearchParams({
-                _nkw:        [cardName, setCode, cardNumber].filter(Boolean).join(' '),
+                _nkw:        [cardName, setCode, cardNumber.split('/')[0]].filter(Boolean).join(' '),
                 LH_Sold:     '1',
                 LH_Complete: '1',
                 _sacat:      '183454',  // Pokémon TCG category

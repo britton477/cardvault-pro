@@ -32,6 +32,8 @@ const ImportCardSchema = z.object({
   language:       z.string().max(10).default('EN'),
   purchase_price: z.number().min(0).max(999999).default(0),
   ebay_avg_sold:  z.number().min(0).max(999999).nullable().default(null),
+  /** Target eBay list price — set when user chooses "Import + List on eBay" */
+  listed_price:   z.number().min(0).max(999999).nullable().default(null),
   source:         z.string().max(200).default('Bulk Wizard'),
   notes:          z.string().max(2000).default(''),
 })
@@ -94,6 +96,8 @@ export async function POST(request: NextRequest) {
       purchase_date:  now.split('T')[0],
       ebay_avg_sold:  card.ebay_avg_sold,
       price_source:   card.ebay_avg_sold ? 'ebay' : null,
+      // listed_price is stored so the eBay bulk-list route can use it immediately
+      listed_price:   card.listed_price ?? null,
       source:         card.source || source,
       notes:          card.notes || '',
       lot_id:         input.lot_id ?? null,

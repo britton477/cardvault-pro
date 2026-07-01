@@ -9,8 +9,8 @@
 // The page is split into a fixed left toolbar panel (drop zone + controls)
 // and a right content area that changes per phase.
 // =============================================================================
-import { useRef }          from 'react'
-import { Lock, X, RotateCcw, ArrowRight, ChevronLeft } from 'lucide-react'
+import { useRef, useEffect } from 'react'
+import { Lock, X, RotateCcw, ArrowRight, ChevronLeft, AlertTriangle } from 'lucide-react'
 import { useBulkWizard }   from '@/hooks/useBulkWizard'
 import { ScanDropZone }    from './ScanDropZone'
 import { CardScanRow }     from './CardScanRow'
@@ -52,6 +52,21 @@ export function BulkWizardView() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const canProceed = wiz.readyCount > 0
+
+  // ── Navigation guard ──────────────────────────────────────────────────────
+  // Warn the user if they try to close/refresh the tab while cards are loaded.
+  // Next.js App Router has no built-in SPA nav guard, so we pair this with
+  // a visible banner (below) for in-app navigation.
+  useEffect(() => {
+    if (wiz.cards.length === 0) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      // Chrome requires returnValue to be set (any string triggers the dialog)
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [wiz.cards.length])
 
   return (
     <div className="flex flex-col h-full min-h-0 gap-0 -m-6">
@@ -115,6 +130,16 @@ export function BulkWizardView() {
           </div>
         )}
       </div>
+
+      {/* ── Unsaved-data warning banner ─────────────────────────────── */}
+      {wiz.cards.length > 0 && (
+        <div className="flex items-center gap-2 px-6 py-2 bg-amber-500/10 border-b border-amber-500/20 flex-shrink-0">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+          <p className="text-xs text-amber-300/90">
+            Navigating away will clear your scanned cards — use <strong>Import</strong> to save them first.
+          </p>
+        </div>
+      )}
 
       {/* ── Phase 1: Scan ───────────────────────────────────────────── */}
       {wiz.phase === 'scan' && (
