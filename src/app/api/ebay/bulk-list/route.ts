@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     // ── Load cards ─────────────────────────────────────────────────────────────
     const { data: cards, error: cardsErr } = await db
       .from('cards')
-      .select('*, photos:card_photos(url)')
+      .select('*, photos:card_photos(url, position)')
       .in('id', input.card_ids)
       .eq('org_id', orgId)
       .is('deleted_at', null)
@@ -105,7 +105,9 @@ export async function POST(request: NextRequest) {
 
       // Attempt listing
       try {
-        const photoUrls = ((card.photos ?? []) as Array<{ url: string }>).map(p => p.url)
+        const photoUrls = ((card.photos ?? []) as Array<{ url: string; position: number }>)
+          .sort((a, b) => a.position - b.position)
+          .map(p => p.url)
         const listPrice = card.listed_price as number
 
         const cardData = {
