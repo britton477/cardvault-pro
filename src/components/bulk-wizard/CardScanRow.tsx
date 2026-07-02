@@ -170,25 +170,35 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
   // ── Additional photos ──────────────────────────────────────────────────────
   const addPhotoRef      = useRef<HTMLInputElement>(null)
   const additionalImages = card.additionalImages ?? []
+  const [isDraggingOver, setIsDraggingOver] = useState(false)
 
-  const handleAddPhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter(f =>
-      ['image/jpeg', 'image/png', 'image/webp'].includes(f.type)
-    )
-    e.target.value = ''
-    if (!files.length) return
+  const processImageFiles = useCallback(async (files: File[]) => {
+    const valid = files.filter(f => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type))
+    if (!valid.length) return
     try {
       const newImgs = await Promise.all(
-        files.map(async f => {
+        valid.map(async f => {
           const b64 = await resizeImageToBase64(f)
           return `data:image/jpeg;base64,${b64}`
         })
       )
-      onUpdate(card.uid, { additionalImages: [...additionalImages, ...newImgs] })
+      onUpdate(card.uid, { additionalImages: [...(card.additionalImages ?? []), ...newImgs] })
     } catch {
       // Additional photos are optional — silently ignore resize errors
     }
-  }, [card.uid, additionalImages, onUpdate])
+  }, [card.uid, card.additionalImages, onUpdate])
+
+  const handleAddPhotos = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    await processImageFiles(files)
+  }, [processImageFiles])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDraggingOver(false)
+    await processImageFiles(Array.from(e.dataTransfer.files))
+  }, [processImageFiles])
 
   const removeAdditionalImage = useCallback((idx: number) => {
     onUpdate(card.uid, {
@@ -415,9 +425,21 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             </div>
           )}
 
-          {/* Row 5: Additional photos + add button */}
+          {/* Row 5: Additional photos + drag-and-drop zone */}
           {isReady && (
-            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+            <div
+              className={cn(
+                'flex items-center gap-1 mt-0.5 flex-wrap rounded-md transition-colors',
+                isDraggingOver && 'outline outline-1 outline-primary/50 bg-primary/5',
+              )}
+              onDragEnter={e => { e.preventDefault(); setIsDraggingOver(true) }}
+              onDragOver={e => { e.preventDefault(); setIsDraggingOver(true) }}
+              onDragLeave={e => {
+                // Only clear if leaving the row entirely (not entering a child)
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDraggingOver(false)
+              }}
+              onDrop={e => { void handleDrop(e) }}
+            >
               {additionalImages.map((src, idx) => (
                 <div
                   key={idx}
@@ -448,20 +470,26 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
                 </div>
               ))}
 
-              {/* Add photo button */}
+              {/* Drop zone / add button — wider when no images yet */}
               <button
                 type="button"
                 onClick={() => addPhotoRef.current?.click()}
-                title="Add another photo (card back, edge, damage)"
+                title="Add back photo — click or drag & drop"
                 className={cn(
-                  'w-7 h-9 rounded border border-dashed flex-shrink-0',
-                  'flex items-center justify-center transition-colors',
+                  'h-9 rounded border border-dashed flex-shrink-0 transition-colors',
+                  'flex items-center justify-center gap-1',
                   additionalImages.length === 0
-                    ? 'border-border/50 text-muted-foreground/40 hover:border-primary/50 hover:text-primary/60'
-                    : 'border-border/40 text-muted-foreground/30 hover:border-primary/40 hover:text-primary/50',
+                    ? 'w-28 border-border/50 text-muted-foreground/40 hover:border-primary/50 hover:text-primary/60'
+                    : 'w-7 border-border/40 text-muted-foreground/30 hover:border-primary/40 hover:text-primary/50',
+                  isDraggingOver && 'border-primary/60 text-primary/70 bg-primary/5',
                 )}
               >
-                <ImagePlus className="h-3 w-3" />
+                <ImagePlus className="h-3 w-3 flex-shrink-0" />
+                {additionalImages.length === 0 && (
+                  <span className="text-[10px] whitespace-nowrap">
+                    {isDraggingOver ? 'Drop here' : 'Add back photo'}
+                  </span>
+                )}
               </button>
 
               <input

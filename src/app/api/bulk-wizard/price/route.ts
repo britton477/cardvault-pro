@@ -50,9 +50,10 @@ export async function POST(request: NextRequest) {
     const body  = await request.json() as unknown
     const input = BodySchema.parse(body)
 
-    // Stable cache key — normalised to lowercase to maximise hit rate
+    // Stable cache key — normalised to lowercase to maximise hit rate.
+    // v2: invalidates v1 cache entries that may contain graded-card-polluted data.
     const cacheKey = [
-      'bulk-price',
+      'bulk-price-v2',
       input.card_name.toLowerCase().replace(/\s+/g, '-'),
       (input.set_code    ?? '').toLowerCase(),
       (input.card_number ?? '').replace(/\//g, '-'),

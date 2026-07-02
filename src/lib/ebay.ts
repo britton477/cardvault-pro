@@ -602,32 +602,51 @@ async function getAppToken(appId: string, secret: string): Promise<string> {
   return data.access_token
 }
 
+// ── Title-based exclusion keywords ────────────────────────────────────────────
+//
+// These are filtered from price results BEFORE IQR so that graded slabs and
+// bundles don't skew the average for raw single-card lookups.
+//
+// Graded cards (PSA/BGS/CGC) sell for 3–10× raw card prices and must be
+// excluded — they appear in the same eBay search results as ungraded singles.
+const PRICE_EXCLUDE_KEYWORDS = [
+  // Graded cards
+  'psa', 'bgs', 'cgc', 'ace grading', 'beckett', 'graded', 'slab',
+  // Bundles / lots
+  'lot', 'bundle', 'job lot', 'bulk', 'x2', 'x3', 'x4', 'x5',
+  'x10', 'x20', 'collection', '2x', '3x', '4x', '5x',
+  // Sealed product (not single cards)
+  'booster', 'sealed', 'pack',
+]
+
 /**
  * Fetch active eBay UK listing prices for a card using the Browse API.
  *
  * Uses client-credentials app token — no user OAuth required.
- * Filters to FixedPrice listings and optionally narrows by condition.
- * IQR outlier removal (1.5×) drops bundles and overpriced BIN listings.
+ * Excludes graded cards (PSA/BGS/CGC) and bundles by title keyword before
+ * applying IQR outlier removal, so raw single-card prices are accurate.
  */
 export async function fetchSoldPrices(
   orgId: string,
   cardName: string,
   setCode?: string,
   condition?: string,   // Optional: 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
-  cardNumber?: string,  // Optional: e.g. '025' — narrows results to specific print
+  cardNumber?: string,  // Optional: full format e.g. '181/159' — set total is stripped
 ): Promise<SoldListing[]> {
   const creds = await getCredentials(orgId)
   if (!creds.appId || !creds.secret) throw new Error('eBay App ID not configured')
 
   const token = await getAppToken(creds.appId, creds.secret)
 
-  // Include set_code in the query — sellers include it in listing titles
-  // (e.g. "Dreepy M2A 211/193") so it narrows results to the correct print.
-  const query = [cardName, setCode, cardNumber].filter(Boolean).join(' ')
+  // Strip set total from card number for query — "181/159" → "181".
+  // The set total ("/159") is noise that matches cards from the same set,
+  // and eBay sellers don't always include it in listing titles.
+  const queryCardNumber = cardNumber ? cardNumber.split('/')[0] : undefined
 
-  // Simple text search — matches the original working proxy approach.
-  // No category or condition filters: the specific query (name + set + number)
-  // is precise enough, and IQR handles any outliers.
+  // Include set_code in the query — sellers include it in listing titles
+  // (e.g. "Dreepy JTG 181") so it narrows results to the correct print.
+  const query = [cardName, setCode, queryCardNumber].filter(Boolean).join(' ')
+
   const params = new URLSearchParams({ q: query, limit: '50' })
 
   let res: Response | null = null
@@ -666,19 +685,32 @@ export async function fetchSoldPrices(
     }))
     .filter(i => i.price > 0)
 
-  // IQR-based outlier removal — drops bundles, slabs, and pricing errors.
-  // 1.5× fence is tighter than the classic 3× since active BIN listings skew high.
-  if (raw.length >= 8) {
-    const sorted = [...raw].sort((a, b) => a.price - b.price)
-    const q1 = sorted[Math.floor(sorted.length * 0.25)]!.price
-    const q3 = sorted[Math.floor(sorted.length * 0.75)]!.price
+  // Remove graded cards, bundles, and sealed product by title keyword.
+  // Must happen BEFORE IQR so that slabs (typically 3–10× raw price) don't
+  // skew the quartile boundaries and allow other outliers through.
+  const filtered = raw.filter(item => {
+    const title = item.title.toLowerCase()
+    return !PRICE_EXCLUDE_KEYWORDS.some(kw => title.includes(kw))
+  })
+
+  // IQR-based outlier removal — drops remaining pricing errors and anomalies.
+  // Threshold lowered to 4 (from 8) so IQR fires even on niche cards with few results.
+  // 1.5× fence is tighter than classic 3× since active BIN listings skew high.
+  if (filtered.length >= 4) {
+    const sorted = [...filtered].sort((a, b) => a.price - b.price)
+    const q1  = sorted[Math.floor(sorted.length * 0.25)]!.price
+    const q3  = sorted[Math.floor(sorted.length * 0.75)]!.price
     const iqr = q3 - q1
-    const lo  = q1 - 1.5 * iqr
-    const hi  = q3 + 1.5 * iqr
-    return raw.filter(i => i.price >= lo && i.price <= hi)
+    // If IQR is 0 (all items same price), skip fence to avoid filtering everything
+    if (iqr > 0) {
+      const lo = q1 - 1.5 * iqr
+      const hi = q3 + 1.5 * iqr
+      return filtered.filter(i => i.price >= lo && i.price <= hi)
+    }
+    return filtered
   }
 
-  return raw
+  return filtered
 }
 
 // ── Listing content helpers (re-exported from shared client-safe module) ───────
