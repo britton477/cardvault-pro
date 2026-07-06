@@ -192,6 +192,7 @@ export default async function BillingPage({
                 key={planId}
                 className={cn(
                   'relative rounded-lg border p-5 flex flex-col',
+                  (isCurrent || plan.highlight) && 'pt-7',
                   isCurrent
                     ? 'border-primary bg-primary/5'
                     : plan.highlight
