@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
   while (true) {
     const { data: cards, error } = await db
       .from('cards')
-      .select('id, org_id, card_name, set_code, card_number, condition')
+      .select('id, org_id, card_name, set_code, card_number, condition, is_graded, grader, grade')
       .in('status', ['In Stock', 'Listed'])
       .is('deleted_at', null)
       .not('card_name', 'is', null)
@@ -73,9 +73,12 @@ export async function GET(request: NextRequest) {
         const listings = await fetchSoldPrices(
           card.org_id as string,
           card.card_name as string,
-          card.set_code  ?? undefined,
-          card.condition ?? undefined,
+          card.set_code    ?? undefined,
+          card.condition   ?? undefined,
           card.card_number ?? undefined,
+          card.is_graded   ?? false,
+          card.grader      ?? null,
+          card.grade       ?? null,
         )
 
         if (listings.length === 0) { skipped++; continue }

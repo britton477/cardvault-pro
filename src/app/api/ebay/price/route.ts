@@ -25,7 +25,9 @@ export async function GET(request: NextRequest) {
     const params = Object.fromEntries(request.nextUrl.searchParams)
     const query  = EbayPriceQuerySchema.parse(params)
 
-    // Include condition + card_number in cache key so each variant is cached separately
+    const isGraded = query.is_graded === 'true'
+
+    // Include condition, grading, and card_number in cache key so each variant is cached separately
     const queryHash = crypto
       .createHash('md5')
       .update([
@@ -33,6 +35,7 @@ export async function GET(request: NextRequest) {
         (query.set_code    ?? '').toLowerCase(),
         (query.card_number ?? '').toLowerCase(),
         (query.condition   ?? '').toLowerCase(),
+        isGraded ? (query.grader ?? '') + (query.grade ?? '') : '',
       ].join('|'))
       .digest('hex')
 
@@ -67,8 +70,17 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        // Fetch from eBay API — condition + card_number narrow results to the specific card
-        const listings = await fetchSoldPrices(orgId, query.card_name, query.set_code, query.condition, query.card_number)
+        // Fetch from eBay API — grading params route to correct slab vs raw pricing
+        const listings = await fetchSoldPrices(
+          orgId,
+          query.card_name,
+          query.set_code,
+          query.condition,
+          query.card_number,
+          isGraded,
+          query.grader ?? null,
+          query.grade  ?? null,
+        )
         const prices   = listings.map((l: { price: number }) => l.price).filter((p: number) => p > 0)
         const med      = median(prices)
 

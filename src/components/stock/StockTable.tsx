@@ -277,9 +277,16 @@ export function StockTable({
                     <ConditionBadge condition={card.condition} />
                   </td>
 
-                  {/* Status */}
+                  {/* Status + grade */}
                   <td className="px-4 py-2">
-                    <StatusBadge status={card.status} />
+                    <div className="flex flex-col gap-1">
+                      <StatusBadge status={card.status} />
+                      {card.is_graded && card.grader && (
+                        <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset bg-purple-500/15 text-purple-400 ring-purple-500/30 whitespace-nowrap">
+                          {card.grader} {card.grade}
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Cost */}

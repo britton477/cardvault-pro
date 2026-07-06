@@ -169,6 +169,10 @@ export const EbayPriceQuerySchema = z.object({
   set_code:    z.string().max(50).optional(),
   card_number: z.string().max(50).optional(),
   condition:   z.enum(['NM', 'LP', 'MP', 'HP', 'Sealed']).optional(),
+  // Grading — pass for professionally graded cards so the lookup targets slab prices
+  is_graded:   z.enum(['true', 'false']).optional(),
+  grader:      z.string().max(50).optional(),
+  grade:       z.string().max(20).optional(),
 })
 
 // ── Bulk card action schemas ──────────────────────────────────────────────────

@@ -604,40 +604,44 @@ async function getAppToken(appId: string, secret: string): Promise<string> {
 
 // ── Title-based exclusion keywords ────────────────────────────────────────────
 //
-// These are filtered from price results BEFORE IQR so that graded slabs and
-// bundles don't skew the average for raw single-card lookups.
-//
-// Graded cards (PSA/BGS/CGC) sell for 3–10× raw card prices and must be
-// excluded — they appear in the same eBay search results as ungraded singles.
-const PRICE_EXCLUDE_KEYWORDS = [
-  // Graded cards — company names and abbreviations
-  'psa', 'bgs', 'cgc', 'ace grading', 'beckett', 'graded', 'slab',
-  'grade ', 'grading', 'gem mt', 'gem mint', 'gem-mint',
-  // Common grade scores in listing titles (e.g. "PSA 10", "CGC 9.5")
-  'psa 10', 'psa10', 'cgc 10', 'cgc10', 'bgs 10', 'bgs10',
-  'psa 9', 'cgc 9', 'bgs 9',
-  // UK grading companies
-  'uk grading', 'ags ', 'rate my',
-  // Bundles / lots
+// BUNDLE_EXCLUSIONS: always applied — removes multi-card lots and sealed product
+// regardless of whether the card is graded or raw.
+const BUNDLE_EXCLUSIONS = [
   'lot', 'bundle', 'job lot', 'bulk', 'x2', 'x3', 'x4', 'x5',
   'x10', 'x20', 'collection', '2x', '3x', '4x', '5x',
-  // Sealed product (not single cards)
   'booster', 'sealed', 'pack',
+]
+
+// RAW_CARD_EXCLUSIONS: applied only for ungraded card lookups.
+// Graded slabs sell for 3–10× raw prices and must be excluded from raw queries.
+const RAW_CARD_EXCLUSIONS = [
+  ...BUNDLE_EXCLUSIONS,
+  // Grading companies
+  'psa', 'bgs', 'cgc', 'ace grading', 'beckett', 'graded', 'slab',
+  'grade ', 'grading', 'gem mt', 'gem mint', 'gem-mint',
+  'psa 10', 'psa10', 'cgc 10', 'cgc10', 'bgs 10', 'bgs10',
+  'psa 9', 'cgc 9', 'bgs 9',
+  'uk grading', 'ags ', 'rate my',
 ]
 
 /**
  * Fetch active eBay UK listing prices for a card using the Browse API.
  *
  * Uses client-credentials app token — no user OAuth required.
- * Excludes graded cards (PSA/BGS/CGC) and bundles by title keyword before
- * applying IQR outlier removal, so raw single-card prices are accurate.
+ *
+ * For raw cards: excludes graded slabs, bundles, and sealed product by keyword.
+ * For graded cards (isGraded=true): includes grader+grade in the search query
+ *   so results are specific to that grade, and only bundle/lot filtering applies.
  */
 export async function fetchSoldPrices(
   orgId: string,
   cardName: string,
   setCode?: string,
-  condition?: string,   // Optional: 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
-  cardNumber?: string,  // Optional: full format e.g. '181/159' — set total is stripped
+  condition?: string,      // Optional: 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
+  cardNumber?: string,     // Optional: full format e.g. '181/159' — set total is stripped
+  isGraded?: boolean,      // true = professionally graded card
+  grader?: string | null,  // e.g. 'PSA', 'BGS', 'CGC', 'ACE Grading'
+  grade?: string | null,   // e.g. '10', '9.5'
 ): Promise<SoldListing[]> {
   const creds = await getCredentials(orgId)
   if (!creds.appId || !creds.secret) throw new Error('eBay App ID not configured')
@@ -645,13 +649,14 @@ export async function fetchSoldPrices(
   const token = await getAppToken(creds.appId, creds.secret)
 
   // Strip set total from card number for query — "181/159" → "181".
-  // The set total ("/159") is noise that matches cards from the same set,
-  // and eBay sellers don't always include it in listing titles.
   const queryCardNumber = cardNumber ? cardNumber.split('/')[0] : undefined
 
-  // Include set_code in the query — sellers include it in listing titles
-  // (e.g. "Dreepy JTG 181") so it narrows results to the correct print.
-  const query = [cardName, setCode, queryCardNumber].filter(Boolean).join(' ')
+  // For graded cards: include grader + grade in the query to match slab listings.
+  // For raw cards: include set code for narrower matching.
+  const queryParts = isGraded
+    ? [cardName, setCode, queryCardNumber, grader, grade]
+    : [cardName, setCode, queryCardNumber]
+  const query = queryParts.filter(Boolean).join(' ')
 
   const params = new URLSearchParams({ q: query, limit: '200' })
 
@@ -691,12 +696,13 @@ export async function fetchSoldPrices(
     }))
     .filter(i => i.price > 0)
 
-  // Remove graded cards, bundles, and sealed product by title keyword.
-  // Must happen BEFORE IQR so that slabs (typically 3–10× raw price) don't
-  // skew the quartile boundaries and allow other outliers through.
+  // For raw cards: exclude graded slabs + bundles.
+  // For graded cards: exclude bundles only — the query already includes the
+  //   grader+grade so raw listings won't appear in results anyway.
+  const exclusions = isGraded ? BUNDLE_EXCLUSIONS : RAW_CARD_EXCLUSIONS
   const filtered = raw.filter(item => {
     const title = item.title.toLowerCase()
-    return !PRICE_EXCLUDE_KEYWORDS.some(kw => title.includes(kw))
+    return !exclusions.some(kw => title.includes(kw))
   })
 
   // IQR-based outlier removal — drops remaining pricing errors and anomalies.
