@@ -213,7 +213,7 @@ Additional rules:
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'bulk_wizard' })
 
     // Rate limit: 60 identify requests per minute per org
     // Raised from 30 → 60 to give headroom for 112-card bulk imports.

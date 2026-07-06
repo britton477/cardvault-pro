@@ -9,7 +9,8 @@
 //   - Enriched with local card data (card name, condition, purchase price)
 // =============================================================================
 import { useState }                                  from 'react'
-import { RefreshCw, ExternalLink, Pencil, XCircle, Check, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react'
+import Link                                          from 'next/link'
+import { RefreshCw, ExternalLink, Pencil, XCircle, Check, TrendingUp, TrendingDown, AlertTriangle, PlugZap } from 'lucide-react'
 import { useEbayListings, useReviseListing, useEndListing } from '@/hooks/useEbayListings'
 import { formatGBP, cn } from '@/lib/utils'
 import type { EbayActiveListing } from '@/types'
@@ -145,10 +146,11 @@ function EbayListingsSkeleton() {
 // ── Main view ─────────────────────────────────────────────────────────────────
 
 export function EbayListingsView() {
-  const { data, isLoading, refetch, isFetching } = useEbayListings()
+  const { data, isLoading, isError, error, refetch, isFetching } = useEbayListings()
 
-  const listings = data?.data ?? []
-  const isSandbox = process.env['NEXT_PUBLIC_EBAY_ENV'] !== 'production'
+  const listings       = data?.data ?? []
+  const isSandbox      = process.env['NEXT_PUBLIC_EBAY_ENV'] !== 'production'
+  const isNotConnected = isError && (error as Error)?.message === 'ebay_not_connected'
 
   return (
     <div className="space-y-5">
@@ -170,7 +172,7 @@ export function EbayListingsView() {
         </div>
         <button
           onClick={() => void refetch()}
-          disabled={isFetching}
+          disabled={isFetching || isNotConnected}
           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-secondary/40 px-3 py-1.5 text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
         >
           <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
@@ -182,7 +184,45 @@ export function EbayListingsView() {
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <EbayListingsSkeleton />
+        ) : isNotConnected ? (
+          /* ── eBay not connected ─────────────────────────────────────────── */
+          <div className="flex flex-col items-center justify-center py-16 gap-4 text-center px-6">
+            <div className="rounded-full bg-primary/10 p-4">
+              <PlugZap className="h-7 w-7 text-primary" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">eBay account not connected</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xs">
+                Connect your eBay seller account to sync listings, revise prices, and end listings directly from CardVault.
+              </p>
+            </div>
+            <Link
+              href="/settings?tab=ebay"
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <PlugZap className="h-3.5 w-3.5" />
+              Connect eBay in Settings
+            </Link>
+          </div>
+        ) : isError ? (
+          /* ── Generic fetch error ────────────────────────────────────────── */
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-6">
+            <AlertTriangle className="h-8 w-8 text-destructive/50" />
+            <div>
+              <p className="text-sm font-medium">Failed to load listings</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(error as Error)?.message ?? 'An unexpected error occurred.'}
+              </p>
+            </div>
+            <button
+              onClick={() => void refetch()}
+              className="text-xs text-primary hover:underline"
+            >
+              Try again
+            </button>
+          </div>
         ) : listings.length === 0 ? (
+          /* ── Connected but no listings ──────────────────────────────────── */
           <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
             <AlertTriangle className="h-8 w-8 text-muted-foreground/30" />
             <div>

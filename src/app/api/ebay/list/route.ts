@@ -13,7 +13,7 @@ import type { EbayListingResult } from '@/types'
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'ebay.bulk_list' })
     const body   = await request.json() as unknown
     const input  = EbayBulkListSchema.parse(body)
 

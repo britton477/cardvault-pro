@@ -60,7 +60,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
   try {
-    const { orgId, user } = await requireAuth()
+    // Sales deletion is owner-only — financial records must not be removed by staff
+    const { orgId, user } = await requireAuth({ role: 'owner' })
     const { id }          = await params
     const supabase        = await createClient()
 

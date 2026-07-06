@@ -16,7 +16,7 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ role: 'owner' })
 
     const code  = request.nextUrl.searchParams.get('code')
     const error = request.nextUrl.searchParams.get('error')

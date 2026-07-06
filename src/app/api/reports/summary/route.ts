@@ -24,7 +24,7 @@ function pct(profit: number, revenue: number): number {
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'reports' })
     const params    = Object.fromEntries(request.nextUrl.searchParams)
     const query     = ReportQuerySchema.parse(params)
     const { from, to } = query

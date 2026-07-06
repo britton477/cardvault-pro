@@ -17,7 +17,7 @@ import { writeAuditLog } from '@/lib/audit'
 
 export async function GET() {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ role: 'owner' })
     const db = createAdminClient()
 
     const { data } = await db
@@ -38,7 +38,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ role: 'owner' })
     const body  = await request.json() as unknown
     const input = EbayCredentialsSchema.parse(body)
 

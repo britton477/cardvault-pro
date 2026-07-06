@@ -12,7 +12,7 @@ interface Params { params: Promise<{ id: string }> }
 
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'purchase_lots' })
     const { id }    = await params
 
     const db = createAdminClient()

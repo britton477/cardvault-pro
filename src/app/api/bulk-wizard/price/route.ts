@@ -41,7 +41,7 @@ function median(nums: number[]): number {
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'bulk_wizard' })
 
     // 60 price lookups per minute per org
     const limit = await rateLimit(request, `bulk-price:${orgId}`, { max: 60, window: '1m' })

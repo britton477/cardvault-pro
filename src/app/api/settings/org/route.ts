@@ -11,7 +11,7 @@ import { writeAuditLog } from '@/lib/audit'
 
 export async function GET() {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ role: 'owner' })
     const db = createAdminClient()
 
     // maybeSingle() returns null (not an error) when no row exists yet
@@ -44,7 +44,7 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ role: 'owner' })
     const body  = await request.json() as unknown
     const input = OrgSettingsSchema.partial().parse(body)
 

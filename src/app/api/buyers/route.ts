@@ -17,7 +17,7 @@ const ListBuyersSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'buyers_crm' })
     const params    = Object.fromEntries(request.nextUrl.searchParams)
     const { search, page, limit } = ListBuyersSchema.parse(params)
 
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'buyers_crm' })
     const body  = await request.json() as unknown
     const input = CreateBuyerSchema.parse(body)
 

@@ -24,7 +24,7 @@ const BodySchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ role: 'owner' })
 
     const body    = await request.json() as unknown
     const { plan_id } = BodySchema.parse(body)

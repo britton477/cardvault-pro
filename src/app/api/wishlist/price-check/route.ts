@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const limit = await rateLimit(request, 'wishlist-price-check', { max: 5, window: '1m' })
     if (!limit.success) return tooManyRequests(60)
 
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'wishlist_alerts' })
     const supabase  = await createClient()
 
     // Load wanted items with a target price set

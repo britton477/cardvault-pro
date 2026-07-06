@@ -49,7 +49,7 @@ export function PriceOpportunities() {
             : items.map(item => (
               <Link
                 key={item.id}
-                href="/stock"
+                href={`/stock?search=${encodeURIComponent(item.card_name)}`}
                 className="flex items-center gap-3 py-2.5 group hover:bg-secondary/20 -mx-2 px-2 rounded transition-colors"
               >
                 {/* Thumb */}

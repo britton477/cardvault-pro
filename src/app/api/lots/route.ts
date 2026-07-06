@@ -17,7 +17,7 @@ const ListLotsSchema = z.object({
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'purchase_lots' })
     const params    = Object.fromEntries(request.nextUrl.searchParams)
     const { search } = ListLotsSchema.parse(params)
 
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'purchase_lots' })
     const body  = await request.json() as unknown
     const input = CreateLotSchema.parse(body)
 

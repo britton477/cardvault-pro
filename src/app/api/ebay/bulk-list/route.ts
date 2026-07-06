@@ -31,7 +31,7 @@ interface SkippedResult { card_id: string; card_name: string; reason: string    
 
 export async function POST(request: NextRequest) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'ebay.bulk_list' })
     const body  = await request.json() as unknown
     const input = BulkEbayListSchema.parse(body)
 

@@ -15,7 +15,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 
 export async function POST() {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ role: 'owner' })
 
     const admin  = createAdminClient()
     const stripe = getStripe()

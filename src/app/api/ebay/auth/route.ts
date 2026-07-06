@@ -9,7 +9,7 @@ import { getCredentials, buildConsentUrl } from '@/lib/ebay'
 
 export async function GET() {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ role: 'owner' })
     const creds     = await getCredentials(orgId)
 
     if (!creds.appId || !creds.ruName) {

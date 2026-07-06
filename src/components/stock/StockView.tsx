@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { useSearchParams }                   from 'next/navigation'
 import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash, ShoppingBag, Tag } from 'lucide-react'
 import { useQueryClient }                    from '@tanstack/react-query'
 import { useCards, useBulkCardAction }      from '@/hooks/useCards'
@@ -58,12 +59,20 @@ export function StockView() {
 
   // ── Filter state ─────────────────────────────────────────────────────────
 
-  const [filters, setFilters]         = useState<StockFilters>(DEFAULT_FILTERS)
+  const searchParams = useSearchParams()
+
+  // Seed search from ?search= query param (e.g. deep-link from Price Opportunities)
+  const initialSearch = searchParams.get('search') ?? ''
+
+  const [filters, setFilters]         = useState<StockFilters>({
+    ...DEFAULT_FILTERS,
+    search: initialSearch,
+  })
   const [showFilters, setShowFilters] = useState(false)
   const [showAddCard, setShowAddCard] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [directEditCard, setDirectEditCard] = useState<Card | null>(null)
-  const [searchInput, setSearchInput] = useState('')
+  const [searchInput, setSearchInput] = useState(initialSearch)
 
   // ── Column visibility ────────────────────────────────────────────────────
 

@@ -14,7 +14,7 @@ interface Params { params: Promise<{ id: string }> }
 
 export async function GET(_request: NextRequest, { params }: Params) {
   try {
-    const { orgId } = await requireAuth()
+    const { orgId } = await requireAuth({ feature: 'buyers_crm' })
     const { id }    = await params
 
     const db = createAdminClient()
@@ -58,7 +58,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'buyers_crm' })
     const { id }          = await params
     const body            = await request.json() as unknown
     const input           = UpdateBuyerSchema.parse(body)
@@ -91,7 +91,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function DELETE(_request: NextRequest, { params }: Params) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'buyers_crm' })
     const { id }          = await params
 
     const db = createAdminClient()

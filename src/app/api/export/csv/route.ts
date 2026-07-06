@@ -45,7 +45,8 @@ function csvResponse(csv: string, filename: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    const { orgId } = await requireAuth()
+    // CSV export is a basic+ feature; owner-only (financial data)
+    const { orgId } = await requireAuth({ role: 'owner', feature: 'csv_export' })
     const params    = Object.fromEntries(request.nextUrl.searchParams)
     const query     = ExportQuerySchema.parse(params)
     const db        = createAdminClient()

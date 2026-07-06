@@ -7,7 +7,19 @@ import { requireAuth, ok, serverError } from '@/lib/api'
 import { getActiveListings } from '@/lib/ebay'
 import { createClient } from '@/lib/supabase/server'
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
-import { type NextRequest } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
+
+// Error messages thrown by ebay.ts when OAuth is not set up
+const NOT_CONNECTED_PHRASES = [
+  'not connected',
+  'credentials not configured',
+  'refresh token missing',
+]
+
+function isNotConnectedError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message.toLowerCase() : ''
+  return NOT_CONNECTED_PHRASES.some(phrase => msg.includes(phrase))
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,6 +62,12 @@ export async function GET(request: NextRequest) {
     return ok({ data: enriched, count: enriched.length })
   } catch (err) {
     if (err instanceof Response) return err
+    if (isNotConnectedError(err)) {
+      return NextResponse.json(
+        { error: 'ebay_not_connected', message: 'eBay account not connected. Go to Settings → eBay to connect.' },
+        { status: 422 },
+      )
+    }
     return serverError(err)
   }
 }
