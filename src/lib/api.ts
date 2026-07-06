@@ -51,7 +51,7 @@ export function validationError(err: ZodError) {
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { features } from '@/lib/env'
-import type { AuthUser } from '@/types'
+import type { AuthUser, UserRole } from '@/types'
 
 interface GuardResult {
   user:  AuthUser
@@ -123,9 +123,36 @@ export async function invalidateAuthCache(userId: string): Promise<void> {
 
 // ── requireAuth ───────────────────────────────────────────────────────────────
 
+import { assertFeature, assertRole } from '@/lib/permissions.server'
+import type { Feature }             from '@/lib/permissions'
+
+export interface RequireAuthOptions {
+  /**
+   * Require the user's role to be one of these values.
+   * Throws 403 if the condition is not met.
+   *
+   * @example
+   *   await requireAuth({ role: 'owner' })
+   */
+  role?: UserRole | UserRole[]
+
+  /**
+   * Require the org's plan to include this feature.
+   * Throws 403 with a PLAN_LIMIT code if the condition is not met.
+   *
+   * @example
+   *   await requireAuth({ feature: 'bulk_wizard' })
+   */
+  feature?: Feature
+}
+
 /**
  * Authenticate the request, load the user's profile and org.
- * Returns { user, orgId } or throws a 401 NextResponse.
+ * Returns { user, orgId } or throws a 401/403 NextResponse.
+ *
+ * Options (all optional — bare requireAuth() still works):
+ *   role    — require the user's role (throws 403 if not satisfied)
+ *   feature — require a plan feature  (throws 403 with PLAN_LIMIT if not satisfied)
  *
  * Performance:
  *   - JWT validation always runs (Supabase validates the token locally from the cookie)
@@ -134,8 +161,11 @@ export async function invalidateAuthCache(userId: string): Promise<void> {
  *
  * Usage:
  *   const { user, orgId } = await requireAuth()
+ *   const { user, orgId } = await requireAuth({ role: 'owner' })
+ *   const { user, orgId } = await requireAuth({ feature: 'bulk_wizard' })
+ *   const { user, orgId } = await requireAuth({ role: 'owner', feature: 'team_management' })
  */
-export async function requireAuth(): Promise<GuardResult> {
+export async function requireAuth(opts?: RequireAuthOptions): Promise<GuardResult> {
   const supabase = await createClient()
   const { data: { user: authUser }, error } = await supabase.auth.getUser()
 
@@ -144,6 +174,12 @@ export async function requireAuth(): Promise<GuardResult> {
   // ── 1. Try Redis cache first ─────────────────────────────────────────────
   const cached = await getProfileFromCache(authUser.id)
   if (cached) {
+    // Still apply option gates even on cache hit
+    if (opts?.feature) assertFeature(cached, opts.feature)
+    if (opts?.role) {
+      const roles = Array.isArray(opts.role) ? opts.role : [opts.role]
+      assertRole(cached, ...roles)
+    }
     return { orgId: cached.profile.org_id, user: cached }
   }
 
@@ -169,6 +205,16 @@ export async function requireAuth(): Promise<GuardResult> {
 
   // ── 3. Populate cache for next request ───────────────────────────────────
   void setProfileInCache(authUser.id, authUserObj)
+
+  // ── 4. Optional role + feature gates ────────────────────────────────────
+  // assertFeature / assertRole throw NextResponse(403) on failure.
+  if (opts?.feature) {
+    assertFeature(authUserObj, opts.feature)
+  }
+  if (opts?.role) {
+    const roles = Array.isArray(opts.role) ? opts.role : [opts.role]
+    assertRole(authUserObj, ...roles)
+  }
 
   return {
     orgId: profile.org_id as string,

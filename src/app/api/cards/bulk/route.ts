@@ -15,7 +15,8 @@
 import { type NextRequest } from 'next/server'
 import { ZodError }         from 'zod'
 import { createAdminClient }                                              from '@/lib/supabase/server'
-import { requireAuth, ok, serverError, validationError }                 from '@/lib/api'
+import { requireAuth, ok, serverError, validationError }                   from '@/lib/api'
+import { assertRole }                                                      from '@/lib/permissions.server'
 import { writeAuditLog }                                                  from '@/lib/audit'
 import { BulkCardActionSchema }                                           from '@/types/validation'
 
@@ -24,6 +25,11 @@ export async function POST(request: NextRequest) {
     const { orgId, user } = await requireAuth()
     const body  = await request.json() as unknown
     const input = BulkCardActionSchema.parse(body)
+
+    // Bulk delete is owner-only — assertRole throws 403 for members
+    if (input.action === 'delete') {
+      assertRole(user, 'owner')
+    }
     const db    = createAdminClient()
     const now   = new Date().toISOString()
     let affected = 0

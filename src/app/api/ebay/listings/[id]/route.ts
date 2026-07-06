@@ -19,7 +19,7 @@ const ReviseSchema = z.object({
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'ebay.bulk_list' })
     const { id: listingId } = await params
 
     const limit = await rateLimit(request, 'ebay-revise', { max: 20, window: '1m' })
@@ -59,7 +59,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
 export async function DELETE(request: NextRequest, { params }: Ctx) {
   try {
-    const { orgId, user } = await requireAuth()
+    const { orgId, user } = await requireAuth({ feature: 'ebay.bulk_list', role: 'owner' })
     const { id: listingId } = await params
 
     const limit = await rateLimit(request, 'ebay-end', { max: 10, window: '1m' })
