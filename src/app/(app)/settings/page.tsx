@@ -3,8 +3,9 @@
 // Each section is an independent form card with its own Save button.
 // =============================================================================
 import type { Metadata } from 'next'
-import { createAdminClient } from '@/lib/supabase/server'
-import { getServerSession } from '@/lib/auth'
+import { redirect }           from 'next/navigation'
+import { createAdminClient }  from '@/lib/supabase/server'
+import { getServerSession }   from '@/lib/auth'
 import { OrgSettingsForm }      from '@/components/settings/OrgSettingsForm'
 import { PolicyIdsForm }        from '@/components/settings/PolicyIdsForm'
 import { EbayCredentialsForm }  from '@/components/settings/EbayCredentialsForm'
@@ -13,25 +14,29 @@ import type { User } from '@/types'
 
 export const metadata: Metadata = { title: 'Settings' }
 
-// Fetch team members server-side (no client exposure of org_id needed)
-async function getTeamMembers(): Promise<User[]> {
-  // Cookie-local session — no network call. See lib/auth.ts for rationale.
+// Load session + profile in one admin query.
+// Returns null if the user is not signed in or has no profile.
+async function getSessionProfile() {
   const session = await getServerSession()
-  if (!session?.user) return []
+  if (!session?.user) return null
 
   const admin = createAdminClient()
   const { data: profile } = await admin
     .from('users')
-    .select('org_id')
+    .select('org_id, role')
     .eq('id', session.user.id)
     .single()
 
-  if (!profile) return []
+  return profile ?? null
+}
 
+// Fetch team members server-side (no client exposure of org_id needed)
+async function getTeamMembers(orgId: string): Promise<User[]> {
+  const admin = createAdminClient()
   const { data: members } = await admin
     .from('users')
     .select('id, name, avatar, role, created_at, updated_at, org_id, pin_hash')
-    .eq('org_id', profile.org_id as string)
+    .eq('org_id', orgId)
     .order('created_at', { ascending: true })
 
   return (members ?? []) as User[]
@@ -47,7 +52,14 @@ export default async function SettingsPage({
 }: {
   searchParams: Promise<Record<string, string>>
 }) {
-  const members = await getTeamMembers()
+  const profile = await getSessionProfile()
+
+  // Members cannot access settings — redirect to dashboard
+  if (!profile || profile.role !== 'owner') {
+    redirect('/dashboard?notice=settings_owner_only')
+  }
+
+  const members = await getTeamMembers(profile.org_id as string)
   const params  = await searchParams
   const ebayConnected = params['ebay_connected'] === '1'
   const ebayError     = params['ebay_error'] ?? null

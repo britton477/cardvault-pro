@@ -111,7 +111,11 @@ function QuickAction({ href, icon, label, variant = 'secondary' }: QuickActionPr
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string>>
+}) {
   // Cookie-local session check — zero network calls. See lib/auth.ts for rationale.
   const session = await getServerSession()
   if (!session?.user) return null
@@ -123,10 +127,19 @@ export default async function DashboardPage() {
     .eq('id', session.user.id)
     .single()
 
-  const stats = profile ? await getStats(profile.org_id as string) : null
+  const stats  = profile ? await getStats(profile.org_id as string) : null
+  const params = searchParams ? await searchParams : {}
 
   return (
     <div className="space-y-6">
+
+      {/* ── Settings-owner-only notice (shown when a member tried to visit /settings) */}
+      {params['notice'] === 'settings_owner_only' && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 text-sm text-amber-400">
+          <span className="text-base">ℹ</span>
+          <span>Settings are only accessible to the account owner.</span>
+        </div>
+      )}
 
       {/* Sets TopBar title (client-side, no SSR needed) */}
       <DashboardHeader />
