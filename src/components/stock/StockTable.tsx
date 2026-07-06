@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertCircle, Layers, Pencil, Tag, ReceiptText, RefreshCw, ExternalLink } from 'lucide-react'
+import { AlertCircle, Layers, Pencil, Tag, ReceiptText, RefreshCw, ExternalLink, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { cn, formatGBP, formatDate } from '@/lib/utils'
 import { ConditionBadge, StatusBadge, SkeletonTableRow, EmptyState } from '@/components/ui'
 import type { Card } from '@/types'
@@ -13,11 +13,15 @@ interface StockTableProps {
   onRowClick?:       (card: Card) => void
   // Bulk selection — all optional; omitting gives original single-select behaviour
   selectedIds?:      Set<string>
-  onToggleSelect?:   (id: string) => void
+  onToggleSelect?:   (id: string, shiftKey?: boolean) => void
   onSelectAll?:      () => void
   onClearAll?:       () => void
   // Column visibility
   showCardNumber?:   boolean
+  // Sortable columns
+  currentSort?:      string
+  currentOrder?:     'asc' | 'desc'
+  onSort?:           (field: string) => void
   // Inline row actions
   pendingIds?:       Set<string>       // Mark Listed in-flight
   pricePendingIds?:  Set<string>       // Per-card price refresh in-flight
@@ -29,6 +33,48 @@ interface StockTableProps {
 
 // Tri-state values for the header checkbox
 type HeaderCheckState = 'none' | 'some' | 'all'
+
+// ── Sortable column header ────────────────────────────────────────────────────
+
+function SortTh({
+  children, field, currentSort, currentOrder, onSort, className, align = 'left',
+}: {
+  children:     React.ReactNode
+  field:        string
+  currentSort?: string
+  currentOrder?: 'asc' | 'desc'
+  onSort?:      (field: string) => void
+  className?:   string
+  align?:       'left' | 'right'
+}) {
+  const active = currentSort === field
+  const Icon = !onSort ? null : active
+    ? (currentOrder === 'asc' ? ArrowUp : ArrowDown)
+    : ArrowUpDown
+
+  return (
+    <th
+      className={cn(
+        'px-4 py-3 font-medium',
+        align === 'right' ? 'text-right' : 'text-left',
+        onSort
+          ? 'cursor-pointer select-none text-muted-foreground hover:text-foreground transition-colors'
+          : 'text-muted-foreground',
+        active && 'text-foreground',
+        className,
+      )}
+      onClick={() => onSort?.(field)}
+      aria-sort={active ? (currentOrder === 'asc' ? 'ascending' : 'descending') : undefined}
+    >
+      <span className={cn('inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
+        {children}
+        {Icon && (
+          <Icon className={cn('h-3 w-3 shrink-0', active ? 'opacity-100' : 'opacity-35')} />
+        )}
+      </span>
+    </th>
+  )
+}
 
 // Compact icon button used in the actions column
 function IBtn({
@@ -60,6 +106,7 @@ export function StockTable({
   cards, isLoading, isError, onAddCard, onRowClick,
   selectedIds, onToggleSelect, onSelectAll, onClearAll,
   showCardNumber = false,
+  currentSort, currentOrder, onSort,
   pendingIds, pricePendingIds, onListItem, onDirectEdit, onRecordSale, onRefreshPrice,
 }: StockTableProps) {
   const bulkEnabled = Boolean(selectedIds && onToggleSelect)
@@ -99,17 +146,17 @@ export function StockTable({
                 </th>
               )}
               <th className="text-left px-4 py-3 font-medium text-muted-foreground w-10" aria-label="Thumbnail" />
-              <th className="text-left px-4 py-3 font-medium text-muted-foreground">Card</th>
+              <SortTh field="card_name" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort}>Card</SortTh>
               {showCardNumber && (
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground w-20">#</th>
+                <SortTh field="card_number" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} className="w-20">#</SortTh>
               )}
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Set</th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cond</th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-              <th className="text-right px-4 py-3 font-medium text-muted-foreground">Cost</th>
-              <th className="text-right px-4 py-3 font-medium text-muted-foreground">Listed</th>
-              <th className="text-right px-4 py-3 font-medium text-muted-foreground">eBay Avg</th>
-              <th className="text-left px-4 py-3 font-medium text-muted-foreground">Added</th>
+              <SortTh field="purchase_price" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} align="right">Cost</SortTh>
+              <SortTh field="listed_price" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} align="right">Listed</SortTh>
+              <SortTh field="ebay_avg_sold" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} align="right">eBay Avg</SortTh>
+              <SortTh field="created_at" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort}>Added</SortTh>
               {/* Actions header — sticky right so buttons stay visible */}
               <th
                 className="w-px py-3 font-medium text-muted-foreground sticky right-0 bg-secondary/30 border-l border-border/20"
@@ -172,17 +219,17 @@ export function StockTable({
                   aria-label={onRowClick ? `View details for ${card.card_name}` : undefined}
                   aria-selected={bulkEnabled ? isSelected : undefined}
                 >
-                  {/* Bulk checkbox */}
+                  {/* Bulk checkbox — shift+click for range selection */}
                   {bulkEnabled && (
-                    <td
-                      className="w-10 px-3 py-2"
-                      onClick={e => { e.stopPropagation(); onToggleSelect!(card.id) }}
-                    >
+                    <td className="w-10 px-3 py-2" onClick={e => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        onChange={() => onToggleSelect!(card.id)}
-                        onClick={e => e.stopPropagation()}
+                        onChange={() => {}}
+                        onClick={e => {
+                          e.stopPropagation()
+                          onToggleSelect!(card.id, e.shiftKey)
+                        }}
                         className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
                         aria-label={`Select ${card.card_name}`}
                       />

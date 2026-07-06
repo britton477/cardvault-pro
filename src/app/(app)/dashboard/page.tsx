@@ -50,9 +50,10 @@ interface StatCardProps {
   sub?:    string
   colour?: 'green' | 'red' | 'primary' | 'default'
   icon?:   React.ReactNode
+  href?:   string
 }
 
-function StatCard({ label, value, sub, colour = 'default', icon }: StatCardProps) {
+function StatCard({ label, value, sub, colour = 'default', icon, href }: StatCardProps) {
   const valueClass = {
     green:   'text-green-400',
     red:     'text-red-400',
@@ -60,24 +61,43 @@ function StatCard({ label, value, sub, colour = 'default', icon }: StatCardProps
     default: 'text-foreground',
   }[colour]
 
-  return (
-    <div className="rounded-lg border border-border bg-card px-5 py-5">
-      <div className="flex items-start justify-between mb-3">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider leading-none">
+  const inner = (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider leading-none mb-1.5">
           {label}
         </p>
-        {icon && (
-          <span className="text-muted-foreground/35" aria-hidden>
-            {icon}
-          </span>
+        <p className={`text-2xl font-bold tabular-nums leading-none ${valueClass}`}>
+          {value}
+        </p>
+        {sub && (
+          <p className="text-[11px] text-muted-foreground mt-1 leading-none">{sub}</p>
         )}
       </div>
-      <p className={`text-3xl font-bold tabular-nums leading-none ${valueClass}`}>
-        {value}
-      </p>
-      {sub && (
-        <p className="text-xs text-muted-foreground mt-2">{sub}</p>
+      {icon && (
+        <span className="text-muted-foreground/25 shrink-0" aria-hidden>
+          {icon}
+        </span>
       )}
+    </div>
+  )
+
+  const baseClass = 'rounded-lg border border-border bg-card px-4 py-3.5 block'
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`${baseClass} hover:border-primary/30 hover:bg-primary/5 transition-colors`}
+      >
+        {inner}
+      </Link>
+    )
+  }
+
+  return (
+    <div className={baseClass}>
+      {inner}
     </div>
   )
 }
@@ -168,48 +188,55 @@ export default async function DashboardPage({
 
       {/* ── Stat cards (SSR, Redis-cached) ──────────────────────────────── */}
       {stats ? (
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard
             label="In stock"
             value={formatNumber(stats.active_card_count)}
             sub={`${formatNumber(stats.listed_count)} listed`}
             colour="primary"
             icon={<Layers className="h-4 w-4" />}
+            href="/stock"
           />
           <StatCard
             label="Inventory cost"
             value={formatGBP(stats.inventory_cost)}
             sub="Purchase basis"
             icon={<ShoppingCart className="h-4 w-4" />}
+            href="/stock"
           />
           <StatCard
             label="Listed value"
             value={formatGBP(stats.listed_value)}
             sub="Combined list prices"
             icon={<Tag className="h-4 w-4" />}
+            href="/stock?status=Listed"
           />
           <StatCard
             label="Total revenue"
             value={formatGBP(stats.total_revenue)}
             icon={<Banknote className="h-4 w-4" />}
+            href="/sales"
           />
           <StatCard
             label="Total profit"
             value={formatGBP(stats.total_profit, { showSign: true })}
             colour={stats.total_profit > 0 ? 'green' : stats.total_profit < 0 ? 'red' : 'default'}
             icon={<TrendingUp className="h-4 w-4" />}
+            href="/sales"
           />
           <StatCard
             label="Pending dispatch"
             value={formatNumber(stats.to_ship)}
             sub={stats.to_ship === 1 ? 'order to ship' : 'orders to ship'}
             icon={<Truck className="h-4 w-4" />}
+            href="/sales?status=Sold"
           />
           <StatCard
             label="Pending delivery"
             value={formatNumber(stats.to_deliver)}
             sub={stats.to_deliver === 1 ? 'order in transit' : 'orders in transit'}
             icon={<PackageCheck className="h-4 w-4" />}
+            href="/sales?status=Shipped"
           />
           {(() => {
             const margin = stats.total_revenue > 0
@@ -222,23 +249,26 @@ export default async function DashboardPage({
                 sub="Profit ÷ revenue"
                 colour={margin === null ? 'default' : margin >= 20 ? 'green' : margin < 0 ? 'red' : 'default'}
                 icon={<Percent className="h-4 w-4" />}
+                href="/sales"
               />
             )
           })()}
         </div>
       ) : (
-        /* Stat skeleton — matches the 3-col grid so layout doesn't shift */
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        /* Stat skeleton — matches the 4-col grid so layout doesn't shift */
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[...Array(8)].map((_, i) => (
             <div
               key={i}
-              className="rounded-lg border border-border bg-card px-5 py-5 animate-pulse"
+              className="rounded-lg border border-border bg-card px-4 py-3.5 animate-pulse"
             >
-              <div className="flex items-start justify-between mb-3">
-                <div className="h-2.5 w-20 rounded bg-secondary/60" />
-                <div className="h-4 w-4 rounded bg-secondary/40" />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="h-2 w-16 rounded bg-secondary/60 mb-2" />
+                  <div className="h-6 w-20 rounded bg-secondary/60" />
+                </div>
+                <div className="h-4 w-4 rounded bg-secondary/30" />
               </div>
-              <div className="h-8 w-28 rounded bg-secondary/60" />
             </div>
           ))}
         </div>

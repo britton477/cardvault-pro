@@ -19,8 +19,9 @@
 // additional photos — updates the in-memory data URL without a server round-trip.
 // =============================================================================
 import { useState, useRef, useCallback } from 'react'
-import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink, Crop } from 'lucide-react'
+import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink, Crop, RotateCcw } from 'lucide-react'
 import { cn, formatGBP }        from '@/lib/utils'
+import { getSetName }           from '@/lib/pokemon-sets'
 import { resizeImageToBase64, fileToDataUrl, dataUrlToFile } from '@/lib/image'
 import { CONDITIONS, FOIL_TYPES } from '@/components/stock/cardConstants'
 import { CropModal }            from '@/components/stock/CropModal'
@@ -142,6 +143,47 @@ function InlineSelect<T extends string>({
   )
 }
 
+// ── Set code editor ───────────────────────────────────────────────────────────
+// Displays the full set name (e.g. "Lost Origin") but edits the short code (e.g. "LOR").
+// The underlying data is always the code — the full name is derived for display only.
+
+function SetCodeEditor({ setCode, onSave }: { setCode: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft,   setDraft]   = useState(setCode)
+
+  const displayName = getSetName(setCode) || setCode
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { onSave(draft); setEditing(false) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter')  { onSave(draft); setEditing(false) }
+          if (e.key === 'Escape') { setDraft(setCode); setEditing(false) }
+        }}
+        placeholder="Set code (e.g. LOR)"
+        className="rounded border border-primary bg-card px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono uppercase w-28"
+      />
+    )
+  }
+
+  return (
+    <button
+      onClick={() => { setDraft(setCode); setEditing(true) }}
+      title={`Set code: ${setCode || '—'} — click to edit`}
+      className="group flex items-center gap-1 rounded px-1 -mx-1 hover:bg-secondary/60 transition-colors"
+    >
+      <span className={displayName ? 'text-foreground' : 'text-muted-foreground/50 italic'}>
+        {displayName || 'Set code'}
+      </span>
+      <Pencil className="h-2.5 w-2.5 text-muted-foreground/0 group-hover:text-muted-foreground/50 transition-colors flex-shrink-0" />
+    </button>
+  )
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardScanRowProps) {
@@ -237,6 +279,35 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
     }
   }, [card.uid, cropTarget, additionalImages, onUpdate])
 
+  // ── eBay price refresh ────────────────────────────────────────────────────
+  const [isPriceRefreshing, setIsPriceRefreshing] = useState(false)
+
+  async function handleRefreshPrice() {
+    if (isPriceRefreshing) return
+    setIsPriceRefreshing(true)
+    try {
+      const qs = new URLSearchParams({ card_name: cardName })
+      if (setCode)    qs.set('set_code',    setCode)
+      if (cardNumber) qs.set('card_number', cardNumber)
+      if (condition)  qs.set('condition',   condition)
+      const res = await fetch(`/api/ebay/price?${qs}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const json = await res.json() as { median_price?: number | null; price_count?: number }
+      if (json.median_price != null) {
+        onUpdate(card.uid, {
+          ebay_avg_sold:     json.median_price,
+          ebay_sample_count: json.price_count ?? 0,
+        })
+      } else {
+        onUpdate(card.uid, { ebay_avg_sold: null, ebay_sample_count: 0 })
+      }
+    } catch {
+      // Silently ignore — stale price stays displayed
+    } finally {
+      setIsPriceRefreshing(false)
+    }
+  }
+
   // ── List price helpers ─────────────────────────────────────────────────────
   const suggestedPrice = card.ebay_avg_sold
     ? Math.round(card.ebay_avg_sold * 1.1 * 100) / 100
@@ -311,11 +382,10 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
           {/* Row 2: set · number · condition · foil */}
           {isReady && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-              <InlineText
-                value={setCode}
-                placeholder="Set code"
+              {/* Set name — displays full name, edits the underlying set code */}
+              <SetCodeEditor
+                setCode={setCode}
                 onSave={v => setOverride('set_code', v.toUpperCase())}
-                className="font-mono uppercase"
               />
               <span className="text-border">·</span>
               <InlineText
@@ -344,7 +414,7 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             </div>
           )}
 
-          {/* Row 3: eBay avg price + sold search link */}
+          {/* Row 3: eBay avg price + refresh + sold search link */}
           {isReady && (
             <div className="flex items-center gap-1.5 text-xs flex-wrap">
               {card.ebay_avg_sold ? (
@@ -359,6 +429,16 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
               ) : (
                 <span className="text-muted-foreground/50 italic">No eBay price found</span>
               )}
+              {/* Refresh eBay price — useful after editing card name / set code */}
+              <button
+                type="button"
+                onClick={() => { void handleRefreshPrice() }}
+                title="Re-fetch eBay price with current card details"
+                disabled={isPriceRefreshing}
+                className="inline-flex items-center gap-0.5 text-muted-foreground/40 hover:text-primary/70 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw className={cn('h-3 w-3', isPriceRefreshing && 'animate-spin')} />
+              </button>
               {/* eBay sold search — always visible so user can verify manually */}
               <a
                 href={`https://www.ebay.co.uk/sch/i.html?${new URLSearchParams({

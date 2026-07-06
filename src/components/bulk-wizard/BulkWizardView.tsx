@@ -9,8 +9,8 @@
 // The page is split into a fixed left toolbar panel (drop zone + controls)
 // and a right content area that changes per phase.
 // =============================================================================
-import { useRef, useEffect } from 'react'
-import { Lock, X, RotateCcw, ArrowRight, ChevronLeft, AlertTriangle } from 'lucide-react'
+import { useRef, useEffect, useState, useCallback } from 'react'
+import { Lock, X, RotateCcw, ArrowRight, ChevronLeft, AlertTriangle, ImagePlus, CheckCircle2 } from 'lucide-react'
 import { useBulkWizard }   from '@/hooks/useBulkWizard'
 import { ScanDropZone }    from './ScanDropZone'
 import { CardScanRow }     from './CardScanRow'
@@ -49,9 +49,57 @@ function PhaseDivider({ done }: { done: boolean }) {
 
 export function BulkWizardView() {
   const wiz = useBulkWizard()
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef       = useRef<HTMLInputElement>(null)
+  const backsInputRef  = useRef<HTMLInputElement>(null)
 
-  const canProceed = wiz.readyCount > 0
+  const canProceed     = wiz.readyCount > 0
+
+  // ── Batch backs mode ───────────────────────────────────────────────────────
+  // When active, the right panel shows a bulk drop zone. Dropped images are
+  // assigned in sequence to cards that don't yet have a back photo.
+  const [batchBacksMode,    setBatchBacksMode]    = useState(false)
+  const [backsAssignCount,  setBacksAssignCount]  = useState(0)
+  const [isDraggingBacks,   setIsDraggingBacks]   = useState(false)
+
+  const readyCards      = wiz.cards.filter(c => c.status === 'ready')
+  const cardsWithoutBacks = readyCards.filter(c => !c.additionalImages?.length)
+  const hasAnyBacks     = readyCards.some(c => c.additionalImages?.length)
+
+  const assignBatchBacks = useCallback(async (files: File[]) => {
+    const valid = files.filter(f => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type))
+    if (!valid.length) return
+
+    // Dynamically import to avoid bundling image utilities in SSR
+    const { resizeImageToBase64 } = await import('@/lib/image')
+
+    // Cards that still need backs (preserve insertion order)
+    const targets = wiz.cards.filter(c => c.status === 'ready' && !c.additionalImages?.length)
+
+    let assigned = 0
+    for (let i = 0; i < Math.min(valid.length, targets.length); i++) {
+      try {
+        const b64    = await resizeImageToBase64(valid[i]!)
+        const dataUrl = `data:image/jpeg;base64,${b64}`
+        wiz.updateCard(targets[i]!.uid, { additionalImages: [dataUrl] })
+        assigned++
+      } catch {
+        // Skip images that fail to process
+      }
+    }
+    setBacksAssignCount(prev => prev + assigned)
+  }, [wiz])
+
+  function handleBacksDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setIsDraggingBacks(false)
+    void assignBatchBacks(Array.from(e.dataTransfer.files))
+  }
+
+  function handleBacksFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    void assignBatchBacks(files)
+  }
 
   // ── Navigation guard ──────────────────────────────────────────────────────
   // Warn the user if they try to close/refresh the tab while cards are loaded.
@@ -190,6 +238,33 @@ export function BulkWizardView() {
 
             <ScanDropZone onFiles={wiz.addImages} disabled={false} />
 
+            {/* Batch backs — shown when there are ready cards */}
+            {readyCards.length > 0 && (
+              <div className="border-t border-border/60 pt-4 space-y-2">
+                <div>
+                  <p className="text-xs font-medium text-foreground">Back photos</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    {cardsWithoutBacks.length > 0
+                      ? `${cardsWithoutBacks.length} card${cardsWithoutBacks.length !== 1 ? 's' : ''} without a back`
+                      : 'All cards have backs'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setBatchBacksMode(v => !v); setBacksAssignCount(0) }}
+                  className={cn(
+                    'w-full flex items-center justify-center gap-1.5 rounded-md border py-2 text-xs font-medium transition-colors',
+                    batchBacksMode
+                      ? 'border-primary/50 bg-primary/10 text-primary'
+                      : 'border-border bg-secondary/30 text-muted-foreground hover:text-foreground hover:bg-secondary',
+                  )}
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {batchBacksMode ? 'Exit backs mode' : 'Add backs in batch'}
+                </button>
+              </div>
+            )}
+
             {/* Proceed CTA */}
             {canProceed && (
               <Button
@@ -211,9 +286,114 @@ export function BulkWizardView() {
             )}
           </div>
 
-          {/* Right: identified card list */}
+          {/* Right: card list or batch backs zone */}
           <div className="flex-1 overflow-y-auto p-5">
-            {wiz.cards.length === 0 ? (
+            {batchBacksMode && readyCards.length > 0 ? (
+              /* ── Batch backs drop zone ───────────────────────────── */
+              <div className="flex flex-col h-full gap-5">
+                {/* Header */}
+                <div>
+                  <h3 className="text-sm font-semibold">Add back photos in batch</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Select or drop all back photos at once — they'll be assigned to cards in order,
+                    starting with cards that don't have a back yet.
+                  </p>
+                </div>
+
+                {/* Progress */}
+                {backsAssignCount > 0 && (
+                  <div className="flex items-center gap-2 rounded-lg border border-green-500/20 bg-green-500/5 px-4 py-2.5">
+                    <CheckCircle2 className="h-4 w-4 text-green-400 shrink-0" />
+                    <span className="text-sm text-green-400">
+                      {backsAssignCount} back photo{backsAssignCount !== 1 ? 's' : ''} assigned
+                    </span>
+                  </div>
+                )}
+
+                {/* Remaining count */}
+                {cardsWithoutBacks.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {cardsWithoutBacks.length} card{cardsWithoutBacks.length !== 1 ? 's' : ''} still need a back photo
+                  </p>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5">
+                    <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-sm text-primary font-medium">All cards have back photos!</span>
+                  </div>
+                )}
+
+                {/* Drop zone */}
+                <div
+                  className={cn(
+                    'flex-1 rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-4',
+                    'transition-colors cursor-pointer min-h-[200px]',
+                    isDraggingBacks
+                      ? 'border-primary/60 bg-primary/5 text-primary'
+                      : 'border-border/50 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                  )}
+                  onDragEnter={e => { e.preventDefault(); setIsDraggingBacks(true) }}
+                  onDragOver={e => { e.preventDefault(); setIsDraggingBacks(true) }}
+                  onDragLeave={e => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDraggingBacks(false)
+                  }}
+                  onDrop={handleBacksDrop}
+                  onClick={() => backsInputRef.current?.click()}
+                >
+                  <ImagePlus className="h-10 w-10 opacity-40" />
+                  <div className="text-center">
+                    <p className="text-sm font-medium">
+                      {isDraggingBacks ? 'Drop backs here' : 'Drop back photos or click to select'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      JPEG, PNG, WEBP — select multiple at once
+                    </p>
+                  </div>
+                </div>
+
+                <input
+                  ref={backsInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  className="hidden"
+                  onChange={handleBacksFileInput}
+                />
+
+                {/* Mini thumbnail grid preview */}
+                {readyCards.length > 0 && (
+                  <div>
+                    <p className="text-[11px] text-muted-foreground mb-2">Cards in order ({readyCards.length} total)</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {readyCards.map((card) => {
+                        const hasBack = !!(card.additionalImages?.length)
+                        return (
+                          <div
+                            key={card.uid}
+                            title={card.card_name ?? 'Unknown'}
+                            className={cn(
+                              'relative w-8 h-10 rounded overflow-hidden border flex-shrink-0',
+                              hasBack ? 'border-green-500/50' : 'border-border/50',
+                            )}
+                          >
+                            {card.imageDataUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={card.imageDataUrl} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-secondary flex items-center justify-center">
+                                <span className="text-[8px]">🃏</span>
+                              </div>
+                            )}
+                            {hasBack && (
+                              <div className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-green-500" />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : wiz.cards.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
                 <span className="text-6xl opacity-10">🃏</span>
                 <div>

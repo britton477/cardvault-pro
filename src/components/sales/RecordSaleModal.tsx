@@ -40,8 +40,19 @@ function shippingLabel(soldPrice: number): string {
 }
 
 // ── eBay fees ─────────────────────────────────────────────────────────────────
-// Private sellers on eBay UK pay zero platform fees since October 2024.
-function calcEbayFees(_soldPrice: number): string { return '0' }
+// Business seller final value fee: 12.8% of sold price + £0.30 fixed per order.
+// Ref: https://www.ebay.co.uk/help/selling/fees-credits-invoices/selling-fees
+function calcEbayFees(soldPrice: number): string {
+  if (soldPrice <= 0) return ''
+  const fee = soldPrice * 0.128 + 0.30
+  return fee.toFixed(2)
+}
+
+function ebayFeeHint(soldPrice: number): string {
+  if (soldPrice <= 0) return 'Auto: 12.8% + £0.30'
+  const fee = soldPrice * 0.128 + 0.30
+  return `Auto: 12.8% + £0.30 = £${fee.toFixed(2)}`
+}
 
 // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -125,9 +136,10 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
     setForm(prev => {
       const next = { ...prev, [key]: value }
 
-      // Auto-fill eBay fees (private seller = £0) when sold_price or platform changes
+      // Auto-fill eBay fees (12.8% + £0.30 business seller) when sold_price or platform changes
       if ((key === 'sold_price' || key === 'platform') && next.feesAuto) {
-        next.fees = next.platform === 'eBay' ? calcEbayFees(0) : ''
+        const price = parseFloat(next.sold_price)
+        next.fees = next.platform === 'eBay' ? calcEbayFees(!isNaN(price) ? price : 0) : ''
       }
 
       // Auto-fill shipping when sold_price changes
@@ -147,7 +159,12 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
 
   // Re-enable fee auto-calc
   function resetFeesAuto() {
-    setForm(prev => ({ ...prev, fees: prev.platform === 'eBay' ? calcEbayFees(0) : '', feesAuto: true }))
+    const price = parseFloat(form.sold_price)
+    setForm(prev => ({
+      ...prev,
+      fees:     prev.platform === 'eBay' ? calcEbayFees(!isNaN(price) ? price : 0) : '',
+      feesAuto: true,
+    }))
   }
 
   // Manual shipping override — disables auto-fill
@@ -401,7 +418,7 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
                       placeholder="0.00"
                       hint={
                         form.feesAuto && form.platform === 'eBay'
-                          ? 'Auto: private seller — no fees'
+                          ? ebayFeeHint(soldPrice)
                           : undefined
                       }
                     />

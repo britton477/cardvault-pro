@@ -610,8 +610,14 @@ async function getAppToken(appId: string, secret: string): Promise<string> {
 // Graded cards (PSA/BGS/CGC) sell for 3–10× raw card prices and must be
 // excluded — they appear in the same eBay search results as ungraded singles.
 const PRICE_EXCLUDE_KEYWORDS = [
-  // Graded cards
+  // Graded cards — company names and abbreviations
   'psa', 'bgs', 'cgc', 'ace grading', 'beckett', 'graded', 'slab',
+  'grade ', 'grading', 'gem mt', 'gem mint', 'gem-mint',
+  // Common grade scores in listing titles (e.g. "PSA 10", "CGC 9.5")
+  'psa 10', 'psa10', 'cgc 10', 'cgc10', 'bgs 10', 'bgs10',
+  'psa 9', 'cgc 9', 'bgs 9',
+  // UK grading companies
+  'uk grading', 'ags ', 'rate my',
   // Bundles / lots
   'lot', 'bundle', 'job lot', 'bulk', 'x2', 'x3', 'x4', 'x5',
   'x10', 'x20', 'collection', '2x', '3x', '4x', '5x',
@@ -647,7 +653,7 @@ export async function fetchSoldPrices(
   // (e.g. "Dreepy JTG 181") so it narrows results to the correct print.
   const query = [cardName, setCode, queryCardNumber].filter(Boolean).join(' ')
 
-  const params = new URLSearchParams({ q: query, limit: '50' })
+  const params = new URLSearchParams({ q: query, limit: '200' })
 
   let res: Response | null = null
   for (let attempt = 0; attempt < 3; attempt++) {

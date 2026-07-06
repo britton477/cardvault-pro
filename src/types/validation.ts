@@ -49,7 +49,7 @@ export const ListCardsSchema = z.object({
   status:    CardStatusSchema.optional(),
   set_code:  z.string().max(50).optional(),
   condition: CardConditionSchema.optional(),
-  sort:      z.enum(['card_name', 'card_number', 'created_at', 'purchase_price', 'listed_price', 'updated_at']).default('created_at'),
+  sort:      z.enum(['card_name', 'card_number', 'created_at', 'purchase_price', 'listed_price', 'updated_at', 'ebay_avg_sold']).default('created_at'),
   order:     z.enum(['asc', 'desc']).default('desc'),
 })
 

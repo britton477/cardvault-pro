@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash, ShoppingBag, Tag } from 'lucide-react'
 import { useQueryClient }                    from '@tanstack/react-query'
 import { useCards, useBulkCardAction }      from '@/hooks/useCards'
@@ -46,6 +46,9 @@ const SORT_OPTIONS = [
   { value: 'purchase_price-desc',  label: 'Cost ↓'        },
   { value: 'purchase_price-asc',   label: 'Cost ↑'        },
   { value: 'listed_price-desc',    label: 'List price ↓'  },
+  { value: 'listed_price-asc',     label: 'List price ↑'  },
+  { value: 'ebay_avg_sold-desc',   label: 'eBay avg ↓'    },
+  { value: 'ebay_avg_sold-asc',    label: 'eBay avg ↑'    },
 ]
 
 export function StockView() {
@@ -179,11 +182,26 @@ export function StockView() {
 
   // ── Selection helpers ─────────────────────────────────────────────────────
 
-  function toggleSelect(id: string) {
+  const lastSelectedId = useRef<string | null>(null)
+
+  function toggleSelect(id: string, shiftKey = false) {
     setSelectedIds(prev => {
       const next = new Set(prev)
+
+      if (shiftKey && lastSelectedId.current) {
+        // Range-select from last clicked to current
+        const lastIdx = currentPageCards.findIndex(c => c.id === lastSelectedId.current)
+        const currIdx = currentPageCards.findIndex(c => c.id === id)
+        if (lastIdx >= 0 && currIdx >= 0) {
+          const [from, to] = lastIdx <= currIdx ? [lastIdx, currIdx] : [currIdx, lastIdx]
+          currentPageCards.slice(from, to + 1).forEach(c => next.add(c.id))
+          return next
+        }
+      }
+
       if (next.has(id)) next.delete(id)
       else              next.add(id)
+      lastSelectedId.current = id
       return next
     })
   }
@@ -194,6 +212,17 @@ export function StockView() {
 
   function clearSelection() {
     setSelectedIds(new Set())
+  }
+
+  // ── Sort via column header click ──────────────────────────────────────────
+
+  function handleSort(field: string) {
+    setFilters(prev => ({
+      ...prev,
+      sort:  field as StockFilters['sort'],
+      order: prev.sort === field && prev.order === 'desc' ? 'asc' : 'desc',
+      page:  1,
+    }))
   }
 
   // Derived: visible selected cards
@@ -495,6 +524,9 @@ export function StockView() {
         onSelectAll={selectAll}
         onClearAll={clearSelection}
         showCardNumber={showCardNumber}
+        currentSort={filters.sort}
+        currentOrder={filters.order}
+        onSort={handleSort}
         pendingIds={statusPendingIds}
         pricePendingIds={pricePendingIds}
         onListItem={(card) => setListItemCard(card)}

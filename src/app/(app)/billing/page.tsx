@@ -182,7 +182,7 @@ export default async function BillingPage({
       {/* Plan cards */}
       <div>
         <h3 className="text-base font-semibold mb-4">Plans</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
           {PLAN_ORDER.map(planId => {
             const plan      = PLANS[planId]
             const isCurrent = planId === (org.plan as string)
@@ -202,8 +202,8 @@ export default async function BillingPage({
               >
                 {/* Most popular badge */}
                 {plan.highlight && !isCurrent && (
-                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
-                    <span className="bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full">
+                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                    <span className="bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full whitespace-nowrap">
                       Most popular
                     </span>
                   </div>
@@ -211,8 +211,8 @@ export default async function BillingPage({
 
                 {/* Current badge */}
                 {isCurrent && (
-                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
-                    <span className="bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full">
+                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                    <span className="bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full whitespace-nowrap">
                       Current plan
                     </span>
                   </div>
