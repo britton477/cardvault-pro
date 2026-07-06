@@ -18,6 +18,7 @@ import {
   BookOpen,
   Mail,
   Wand2,
+  CreditCard,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -58,9 +59,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: 'System',
     items: [
-      { href: '/settings', label: 'Settings', icon: Settings  },
-      { href: '/info',     label: 'Info',     icon: BookOpen  },
-      { href: '/contact',  label: 'Contact',  icon: Mail      },
+      { href: '/billing',  label: 'Billing',  icon: CreditCard },
+      { href: '/settings', label: 'Settings', icon: Settings   },
+      { href: '/info',     label: 'Info',     icon: BookOpen   },
+      { href: '/contact',  label: 'Contact',  icon: Mail       },
     ],
   },
 ]

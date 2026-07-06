@@ -52,13 +52,23 @@ export const env = {
 
   // Sentry (optional until Sprint 2)
   NEXT_PUBLIC_SENTRY_DSN: optionalEnv('NEXT_PUBLIC_SENTRY_DSN'),
+
+  // Stripe billing (optional until billing is configured)
+  STRIPE_SECRET_KEY:        optionalEnv('STRIPE_SECRET_KEY'),
+  STRIPE_WEBHOOK_SECRET:    optionalEnv('STRIPE_WEBHOOK_SECRET'),
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: optionalEnv('NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'),
+  // Price IDs from Stripe dashboard (one per plan tier)
+  STRIPE_PRICE_BASIC:       optionalEnv('STRIPE_PRICE_BASIC'),
+  STRIPE_PRICE_GROWTH:      optionalEnv('STRIPE_PRICE_GROWTH'),
+  STRIPE_PRICE_PRO:         optionalEnv('STRIPE_PRICE_PRO'),
 } as const
 
 // ── Feature flags (safe to check anywhere) ────────────────────────────────────
 
 export const features = {
-  r2Enabled:    !!(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
-  aiEnabled:    !!env.ANTHROPIC_API_KEY,
-  redisEnabled: !!(env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN),
-  sentryEnabled: !!env.NEXT_PUBLIC_SENTRY_DSN,
+  r2Enabled:      !!(env.R2_ACCOUNT_ID && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY),
+  aiEnabled:      !!env.ANTHROPIC_API_KEY,
+  redisEnabled:   !!(env.UPSTASH_REDIS_REST_URL && env.UPSTASH_REDIS_REST_TOKEN),
+  sentryEnabled:  !!env.NEXT_PUBLIC_SENTRY_DSN,
+  stripeEnabled:  !!(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET),
 } as const

@@ -16,7 +16,7 @@
 //
 // Rate limited: 5 registrations per IP per hour to prevent mass account creation.
 // =============================================================================
-import { type NextRequest } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 import { z, ZodError } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server'
 import { badRequest, serverError, validationError, conflict } from '@/lib/api'
@@ -83,13 +83,17 @@ export async function POST(request: NextRequest) {
     const orgName = (input.org_name ?? input.shop_name).trim()
     const baseSlug = slugify(orgName)
 
+    const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+
     const { data: org, error: orgError } = await admin
       .from('organizations')
       .insert({
-        name:       orgName,
-        slug:       makeUniqueSlug(baseSlug),
-        plan:       'free',
-        card_limit: 100,
+        name:                orgName,
+        slug:                makeUniqueSlug(baseSlug),
+        plan:                'free',
+        card_limit:          100,
+        subscription_status: 'trial',
+        trial_ends_at:       trialEndsAt,
       })
       .select()
       .single()

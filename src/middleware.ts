@@ -5,7 +5,17 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 // Routes that don't require a logged-in session
-const PUBLIC_PATHS = ['/login', '/register', '/auth/callback', '/api/health', '/api/auth/register', '/register/check-email']
+const PUBLIC_PATHS = [
+  '/login',
+  '/register',
+  '/auth/callback',
+  '/api/health',
+  '/api/auth/register',
+  '/register/check-email',
+  // Stripe webhook: authenticated via Stripe-Signature header, not cookies.
+  // Must bypass CSRF check (no Origin header) and session check (no cookie).
+  '/api/billing/webhook',
+]
 
 // HTTP methods that mutate state — require CSRF Origin check
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])

@@ -4,7 +4,8 @@
 
 // ── Enums (mirror DB enums) ──────────────────────────────────────────────────
 
-export type OrgPlan       = 'free' | 'pro' | 'business'
+export type OrgPlan            = 'free' | 'basic' | 'growth' | 'pro' | 'business'
+export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'cancelled'
 export type UserRole      = 'owner' | 'member'
 export type CardStatus    = 'In Stock' | 'Listed' | 'Sold'
 export type CardCondition = 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
@@ -20,6 +21,11 @@ export interface Organization {
   slug:       string
   plan:       OrgPlan
   card_limit: number
+  // Stripe billing (nullable until org has been through checkout)
+  stripe_customer_id?:     string | null
+  stripe_subscription_id?: string | null
+  subscription_status?:    SubscriptionStatus | null
+  trial_ends_at?:          string | null
   created_at: string
   updated_at: string
 }
