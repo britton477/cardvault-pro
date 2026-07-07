@@ -11,6 +11,7 @@ import { type NextRequest } from 'next/server'
 import { z, ZodError } from 'zod'
 import { ok, serverError, validationError } from '@/lib/api'
 import { withCache } from '@/lib/cache'
+import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 
 const QuerySchema = z.object({
   q:   z.string().min(2).max(100),
@@ -40,6 +41,10 @@ interface PokemonTcgCard {
 
 export async function GET(request: NextRequest) {
   try {
+    // 30 searches/min per IP (client debounces; generous for autofill)
+    const limit = await rateLimit(request, 'tcg-search', { max: 30, window: '1m' })
+    if (!limit.success) return tooManyRequests(60)
+
     const params = Object.fromEntries(request.nextUrl.searchParams)
     const { q, set } = QuerySchema.parse(params)
 

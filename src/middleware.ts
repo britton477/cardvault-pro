@@ -15,6 +15,10 @@ const PUBLIC_PATHS = [
   // Stripe webhook: authenticated via Stripe-Signature header, not cookies.
   // Must bypass CSRF check (no Origin header) and session check (no cookie).
   '/api/billing/webhook',
+  // Vercel Cron: called with `Authorization: Bearer <CRON_SECRET>` and NO session
+  // cookie. Without this, middleware redirects the cron to /login and the job
+  // never runs. Each cron route self-secures by verifying CRON_SECRET.
+  '/api/cron',
 ]
 
 // HTTP methods that mutate state — require CSRF Origin check
