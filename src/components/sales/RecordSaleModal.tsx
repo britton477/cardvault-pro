@@ -6,8 +6,13 @@
 //   b) CardDetailSlideOver ("Record sale" CTA)  → pre-filled from card
 //
 // Features:
-//  - eBay fees auto-set to £0 (private sellers pay no fees since Oct 2024)
-//  - Shipping auto-fill: <£20 → £1.00 (RM 2nd Class), ≥£20 → £2.85 (RM T48)
+//  - eBay fees auto-calculated using the current UK Buyer Protection Fee
+//    schedule (see lib/fees.ts calcBuyerFee) — NOT the retired 12.8%+£0.30
+//    business-seller final value fee. Applied to "Sold price" as the item's
+//    sale amount (excludes any postage the buyer paid separately).
+//  - Shipping auto-fill: <£20 → £0.91 (RM 2nd Class label cost),
+//    ≥£20 → £2.85 (RM T48 label cost) — this is the seller's OWN outgoing
+//    postage cost, not what the buyer was charged for postage.
 //  - Live profit preview banner
 //  - Tracking number field shown when status is Shipped / Fulfilled
 //  - Pre-filled card fields are read-only when opened from a card
@@ -22,6 +27,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { cn, formatGBP } from '@/lib/utils'
 import { CONDITIONS } from '@/components/stock/cardConstants'
+import { calcBuyerFee } from '@/lib/fees'
 import type { Card, SalePlatform, SaleStatus } from '@/types'
 
 // ── Postage auto-fill ─────────────────────────────────────────────────────────
@@ -40,18 +46,22 @@ function shippingLabel(soldPrice: number): string {
 }
 
 // ── eBay fees ─────────────────────────────────────────────────────────────────
-// Business seller final value fee: 12.8% of sold price + £0.30 fixed per order.
-// Ref: https://www.ebay.co.uk/help/selling/fees-credits-invoices/selling-fees
+// UK Buyer Protection Fee (current model — replaced the seller-side % final
+// value fee for private sellers): £0.10 flat + 7% (≤£20) + 4% (£20–£300)
+// + 2% (£300–£4000), applied to the item price. eBay collects this from the
+// BUYER on top of the listing price, then nets it out of the seller's payout
+// — so from the seller's P&L it behaves exactly like a platform fee.
+// Calculation lives in lib/fees.ts (calcBuyerFee) — single source of truth,
+// also used by the eBay listing price suggestion logic.
 function calcEbayFees(soldPrice: number): string {
   if (soldPrice <= 0) return ''
-  const fee = soldPrice * 0.128 + 0.30
-  return fee.toFixed(2)
+  return calcBuyerFee(soldPrice).toFixed(2)
 }
 
 function ebayFeeHint(soldPrice: number): string {
-  if (soldPrice <= 0) return 'Auto: 12.8% + £0.30'
-  const fee = soldPrice * 0.128 + 0.30
-  return `Auto: 12.8% + £0.30 = £${fee.toFixed(2)}`
+  if (soldPrice <= 0) return 'Auto: eBay Buyer Protection Fee'
+  const fee = calcBuyerFee(soldPrice)
+  return `Auto: Buyer Protection Fee = £${fee.toFixed(2)}`
 }
 
 // ── Form state ────────────────────────────────────────────────────────────────
@@ -390,6 +400,7 @@ export function RecordSaleModal({ open, onClose, prefill, queuePos, queueTotal, 
                     value={form.sold_price}
                     onChange={e => set('sold_price', e.target.value)}
                     placeholder="0.00"
+                    hint="Item price only — exclude postage the buyer paid separately"
                   />
                   <Input
                     label="Purchase / cost price"
