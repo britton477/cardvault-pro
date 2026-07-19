@@ -268,8 +268,9 @@ function buildXmlHeader(callName: string, authToken: string): string {
 }
 
 function extractXmlField(xml: string, tag: string): string {
-  const match = xml.match(new RegExp(`<${tag}>([^<]+)<\/${tag}>`))
-  return match?.[1] ?? ''
+  // Match tag with or without attributes: <Tag> or <Tag attr="val">
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([^<]+)<\\/${tag}>`))
+  return match?.[1]?.trim() ?? ''
 }
 
 interface EbayError {
@@ -526,6 +527,7 @@ export async function getActiveListings(orgId: string): Promise<EbayActiveListin
   const xml = `${buildXmlHeader('GetMyeBaySelling', token)}
   <ActiveList>
     <Include>true</Include>
+    <IncludeWatchCount>true</IncludeWatchCount>
     <Pagination>
       <EntriesPerPage>200</EntriesPerPage>
       <PageNumber>1</PageNumber>
@@ -537,24 +539,38 @@ export async function getActiveListings(orgId: string): Promise<EbayActiveListin
 
   const items = [...response.matchAll(/<Item>([\s\S]*?)<\/Item>/g)]
   return items.map(m => {
-    const block = m[1] ?? ''
-    const listingId = extractXmlField(block, 'ItemID')
+    const block      = m[1] ?? ''
+    const listingId  = extractXmlField(block, 'ItemID')
+    // CurrentPrice has a currencyID attribute: <CurrentPrice currencyID="GBP">5.99</CurrentPrice>
+    // extractXmlField now handles attributes correctly
+    const price      = parseFloat(extractXmlField(block, 'CurrentPrice') || '0')
+    // StartTime/EndTime live inside <ListingDetails> — extractXmlField searches the whole block
+    // so it finds them without needing to navigate the nesting explicitly
+    const startTime  = extractXmlField(block, 'StartTime')
+    const endTime    = extractXmlField(block, 'EndTime')
+    const listingUrl = extractXmlField(block, 'ViewItemURL') ||
+      (IS_SANDBOX
+        ? `https://www.sandbox.ebay.co.uk/itm/${listingId}`
+        : `https://www.ebay.co.uk/itm/${listingId}`)
+
     return {
       listingId,
       title:      extractXmlField(block, 'Title'),
-      price:      parseFloat(extractXmlField(block, 'CurrentPrice') || '0'),
-      quantity:   parseInt(extractXmlField(block, 'Quantity') || '1', 10),
+      price,
+      quantity:   parseInt(extractXmlField(block, 'Quantity') || '0', 10),
       watchCount: parseInt(extractXmlField(block, 'WatchCount') || '0', 10),
-      viewCount:  parseInt(extractXmlField(block, 'HitCount') || '0', 10),
-      startTime:  extractXmlField(block, 'ListingDetails>StartTime').replace('ListingDetails>', '') ||
-                  extractXmlField(block, 'StartTime'),
-      endTime:    extractXmlField(block, 'ListingDetails>EndTime').replace('ListingDetails>', '') ||
-                  extractXmlField(block, 'EndTime'),
-      listingUrl: IS_SANDBOX
-        ? `https://www.sandbox.ebay.co.uk/itm/${listingId}`
-        : `https://www.ebay.co.uk/itm/${listingId}`,
+      viewCount:  parseInt(extractXmlField(block, 'HitCount')   || '0', 10),
+      startTime,
+      endTime,
+      listingUrl,
     }
-  }).filter(l => l.listingId && l.price > 0)
+  // Filter: must have a valid ItemID. Price=0 is allowed (free listings / parse fallback)
+  // but we log it so we can detect if the attribute fix regressed
+  }).filter(l => {
+    if (!l.listingId) return false
+    if (l.price === 0) console.warn(`[getActiveListings] price=0 for listing ${l.listingId} — check XML`)
+    return true
+  })
 }
 
 // ── Browse API — active listing price lookup ──────────────────────────────────
