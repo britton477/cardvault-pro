@@ -1,0 +1,36 @@
+# =============================================================================
+# CardVault Pro — line ending normalisation
+#
+# Without this, Git on Windows checks files out with CRLF but stores LF, so a
+# freshly cloned repo reports every file as modified. That makes `git status`
+# useless for spotting real changes and risks commits full of line-ending churn.
+#
+# Rule: LF in the repository, always. Windows editors and Node handle LF fine.
+# The exceptions below are files Windows genuinely requires CRLF for.
+# =============================================================================
+
+# Default: treat everything as text, store as LF in the repo
+* text=auto eol=lf
+
+# Windows shell scripts must keep CRLF or they break when executed
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary files — never touch, never diff
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.avif  binary
+*.pdf   binary
+*.zip   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+
+# Lockfiles: keep as text but suppress diff noise in reviews
+package-lock.json linguist-generated=true
