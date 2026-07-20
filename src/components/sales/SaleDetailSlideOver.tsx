@@ -8,7 +8,7 @@
 //   Edit  — inline form for all sale fields → useUpdateSale on Save
 // =============================================================================
 import { useState, useEffect } from 'react'
-import { Check, Package, Pencil, Trash2, Truck, X, Calculator } from 'lucide-react'
+import { Check, Package, Pencil, Trash2, Truck, X, PackageCheck } from 'lucide-react'
 import { useDeleteSale, useUpdateSale } from '@/hooks/useSales'
 import { useToast } from '@/components/ui/Toast'
 import { SlideOver } from '@/components/ui/SlideOver'
@@ -20,8 +20,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { cn, formatDate, formatGBP } from '@/lib/utils'
 import { CONDITIONS } from '@/components/stock/cardConstants'
 import type { Sale, SalePlatform, SaleStatus } from '@/types'
-
-const EBAY_FVF_RATE = 0.1235
 
 interface SaleDetailSlideOverProps {
   sale:             Sale | null
@@ -40,7 +38,6 @@ interface EditForm {
   qty_sold:        string
   sold_price:      string
   fees:            string
-  feesAuto:        boolean
   shipping:        string
   purchase_price:  string
   sale_date:       string
@@ -58,7 +55,6 @@ function saleToForm(sale: Sale): EditForm {
     qty_sold:        String(sale.qty_sold),
     sold_price:      String(sale.sold_price),
     fees:            String(sale.fees),
-    feesAuto:        false,
     shipping:        String(sale.shipping),
     purchase_price:  String(sale.purchase_price),
     sale_date:       sale.sale_date?.slice(0, 10) ?? '',
@@ -68,8 +64,9 @@ function saleToForm(sale: Sale): EditForm {
 }
 
 export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDetailSlideOverProps) {
-  const [showDelete,   setShowDelete]   = useState(false)
-  const [showTracking, setShowTracking] = useState(false)
+  const [showDelete,    setShowDelete]    = useState(false)
+  const [deleteRestock, setDeleteRestock] = useState(false)
+  const [showTracking,  setShowTracking]  = useState(false)
   const [trackingNum,  setTrackingNum]  = useState('')
   const [isEditing,    setIsEditing]    = useState(false)
   const [form,         setForm]         = useState<EditForm | null>(null)
@@ -104,21 +101,9 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
     setForm(null)
   }
 
-  // Generic field setter with eBay auto-fee side-effect
+  // Plain field setter — fees and shipping are entered manually, never derived.
   function setField<K extends keyof EditForm>(key: K, value: EditForm[K]) {
-    setForm(prev => {
-      if (!prev) return prev
-      const next = { ...prev, [key]: value }
-      if ((key === 'sold_price' || key === 'platform') && next.feesAuto) {
-        const price = parseFloat(key === 'sold_price' ? (value as string) : next.sold_price)
-        if (next.platform === 'eBay' && !isNaN(price) && price > 0) {
-          next.fees = String(Math.round(price * EBAY_FVF_RATE * 100) / 100)
-        } else if (next.platform !== 'eBay') {
-          next.fees = ''
-        }
-      }
-      return next
-    })
+    setForm(prev => (prev ? { ...prev, [key]: value } : prev))
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -184,9 +169,13 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
   async function handleDelete() {
     if (!sale) return
     try {
-      await deleteSale.mutateAsync(sale.id)
-      toast.success('Sale deleted', sale.card_name)
+      await deleteSale.mutateAsync({ saleId: sale.id, restock: deleteRestock })
+      toast.success(
+        'Sale deleted',
+        deleteRestock ? `${sale.card_name} returned to stock` : sale.card_name,
+      )
       setShowDelete(false)
+      setDeleteRestock(false)
       onClose()
     } catch (err) {
       toast.error('Failed to delete sale', err instanceof Error ? err.message : undefined)
@@ -204,7 +193,10 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
     const fees          = parseFloat(form.fees)          || 0
     const shipping      = parseFloat(form.shipping)      || 0
     const purchasePrice = parseFloat(form.purchase_price) || 0
-    const liveProfit    = soldPrice - fees - shipping - purchasePrice
+    // Mirrors the sales.profit generated column — a refund reduces realised
+    // profit just like a fee, so the preview must net it off too.
+    const refunded      = Number(sale.refund_amount ?? 0)
+    const liveProfit    = soldPrice - refunded - fees - shipping - purchasePrice
 
     return (
       <SlideOver
@@ -323,37 +315,15 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Input
-                    label="Platform fees"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    prefix="£"
-                    value={form.fees}
-                    onChange={e => setField('fees', e.target.value)}
-                    hint={form.feesAuto && form.platform === 'eBay'
-                      ? `Auto: ${(EBAY_FVF_RATE * 100).toFixed(2)}% eBay FVF`
-                      : undefined
-                    }
-                  />
-                  {!form.feesAuto && form.platform === 'eBay' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const price = parseFloat(form.sold_price)
-                        const auto  = form.platform === 'eBay' && !isNaN(price) && price > 0
-                          ? String(Math.round(price * EBAY_FVF_RATE * 100) / 100)
-                          : ''
-                        setForm(p => p ? { ...p, fees: auto, feesAuto: true } : p)
-                      }}
-                      className="mt-1 inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      <Calculator className="h-3 w-3" />
-                      Auto-calculate
-                    </button>
-                  )}
-                </div>
+                <Input
+                  label="Platform fees"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  prefix="£"
+                  value={form.fees}
+                  onChange={e => setField('fees', e.target.value)}
+                />
                 <Input
                   label="Shipping cost"
                   type="number"
@@ -364,6 +334,16 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
                   onChange={e => setField('shipping', e.target.value)}
                 />
               </div>
+
+              {/* Refunded notice — the profit preview nets this off */}
+              {Number(sale.refund_amount ?? 0) > 0 && (
+                <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-4 py-2.5 text-xs text-amber-300">
+                  <span>Refunded</span>
+                  <span className="tabular-nums font-semibold">
+                    −{formatGBP(Number(sale.refund_amount))}
+                  </span>
+                </div>
+              )}
 
               {/* Live profit preview */}
               {soldPrice > 0 && (
@@ -573,12 +553,49 @@ export function SaleDetailSlideOver({ sale, onClose, startInEditMode }: SaleDeta
       <ConfirmDialog
         open={showDelete}
         title="Delete sale?"
-        description={`The sale record for "${sale.card_name}" will be permanently removed. This cannot be undone.`}
-        confirmLabel="Delete sale"
+        description={
+          sale.card_id
+            ? `The sale record for "${sale.card_name}" will be permanently removed. This cannot be undone. Choose below whether the ${sale.qty_sold} unit${sale.qty_sold !== 1 ? 's' : ''} should go back into stock.`
+            : `The sale record for "${sale.card_name}" will be permanently removed. This cannot be undone.`
+        }
+        confirmLabel={deleteRestock ? 'Delete and restock' : 'Delete sale'}
         loading={deleteSale.isPending}
         onConfirm={() => void handleDelete()}
-        onCancel={() => setShowDelete(false)}
-      />
+        onCancel={() => { setShowDelete(false); setDeleteRestock(false) }}
+      >
+        {/*
+          Restock is an explicit choice, not inferred. Deleting a sale that never
+          happened should return stock; deleting a duplicate row must not, or it
+          invents inventory that does not physically exist.
+        */}
+        {sale.card_id && (
+          <button
+            type="button"
+            onClick={() => setDeleteRestock(v => !v)}
+            className={cn(
+              'w-full flex items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
+              deleteRestock
+                ? 'border-teal-500/40 bg-teal-500/5'
+                : 'border-border hover:bg-secondary/40',
+            )}
+          >
+            <span className={cn(
+              'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+              deleteRestock ? 'bg-teal-500 border-teal-500' : 'border-border',
+            )}>
+              {deleteRestock && <PackageCheck className="h-3 w-3 text-white" />}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Return card to stock</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                {deleteRestock
+                  ? `${sale.qty_sold} unit${sale.qty_sold !== 1 ? 's' : ''} will be added back to inventory`
+                  : 'Leave off when removing a duplicate — stock is already correct'}
+              </span>
+            </span>
+          </button>
+        )}
+      </ConfirmDialog>
     </>
   )
 }

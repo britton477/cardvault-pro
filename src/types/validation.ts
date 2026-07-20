@@ -33,13 +33,16 @@ export const CreateCardSchema = z.object({
 })
 
 export const UpdateCardSchema = CreateCardSchema.partial().extend({
-  status:           CardStatusSchema.optional(),
-  listed_price:     price.nullish(),
-  listed_on:        z.string().max(50).nullish(),
-  ebay_listing_id:  z.string().max(50).nullish(),
-  ebay_avg_sold:    price.nullish(),
-  price_source:     z.string().max(20).nullish(),
-  lot_id:           uuid.nullish(),
+  status:               CardStatusSchema.optional(),
+  listed_price:         price.nullish(),
+  listed_on:            z.string().max(50).nullish(),
+  ebay_listing_id:      z.string().max(50).nullish(),
+  ebay_avg_sold:        price.nullish(),
+  price_source:         z.string().max(20).nullish(),
+  lot_id:               uuid.nullish(),
+  // Variation listing fields (Sprint 1 migration)
+  listing_type:         z.enum(['single', 'variation']).nullish(),
+  ebay_set_listing_id:  uuid.nullish(),
 })
 
 export const ListCardsSchema = z.object({
@@ -77,7 +80,32 @@ export const CreateSaleSchema = z.object({
   buyer_id:        uuid.optional(),
 })
 
-export const UpdateSaleSchema = CreateSaleSchema.partial()
+export const UpdateSaleSchema = CreateSaleSchema.partial().extend({
+  needs_review: z.boolean().optional(),
+})
+
+/**
+ * Refund a sale — full or partial.
+ *
+ * The sale row is never mutated: sold_price keeps recording what the buyer
+ * paid, and refund_amount accumulates what was given back. Profit nets the two
+ * via a generated column.
+ */
+export const RefundSaleSchema = z.object({
+  /** Amount to refund on THIS action. Accumulates onto any previous refund. */
+  amount:  z.number().min(0.01).max(999999),
+  reason:  z.string().max(500).default(''),
+  /**
+   * Return the card to sellable stock.
+   *
+   * Not inferred from the amount: a full refund does not always mean the card
+   * came back (refund-without-return is common for low-value items), and a
+   * partial refund occasionally accompanies a return. The caller decides.
+   */
+  restock: z.boolean().default(false),
+})
+
+export type RefundSaleInput = z.infer<typeof RefundSaleSchema>
 
 // ── Sealed product schemas ────────────────────────────────────────────────────
 
@@ -282,6 +310,54 @@ export const BulkEbayListSchema = z.object({
 })
 
 export type BulkEbayListInput = z.infer<typeof BulkEbayListSchema>
+
+// ── eBay set (multi-variation) listing schemas ────────────────────────────────
+
+export const CreateSetListingSchema = z.object({
+  /** UUIDs of cards to include as variations in this listing */
+  card_ids:             z.array(uuid).min(1).max(250),
+  title:                nonEmpty.max(80),    // eBay listing title (80 char limit)
+  description:          z.string().max(5000).default(''),
+  set_code:             z.string().max(50).default(''),
+  condition:            CardConditionSchema,
+  // eBay business policy IDs — from org_settings if not provided
+  fulfillment_policy_id: z.string().max(50).optional(),
+  payment_policy_id:     z.string().max(50).optional(),
+  return_policy_id:      z.string().max(50).optional(),
+})
+
+export const AddCardsToSetListingSchema = z.object({
+  action:   z.literal('add_cards'),
+  card_ids: z.array(uuid).min(1).max(250),
+})
+
+export const SyncSetListingSchema = z.object({
+  action: z.literal('sync'),
+})
+
+/**
+ * Resolve a quantity discrepancy by accepting eBay's quantity as truth.
+ *
+ * Handled server-side in a single request rather than N client-side card
+ * PATCHes — those would each re-trigger the variation qty push hook and burn
+ * eBay API quota pushing values eBay already has.
+ */
+export const AcceptEbayQuantitiesSchema = z.object({
+  action:  z.literal('accept_ebay_quantities'),
+  updates: z.array(z.object({
+    card_id: uuid,
+    qty:     z.number().int().min(0).max(9999),
+  })).min(1).max(250),
+})
+
+export const SetListingActionSchema = z.discriminatedUnion('action', [
+  AddCardsToSetListingSchema,
+  SyncSetListingSchema,
+  AcceptEbayQuantitiesSchema,
+])
+
+export type CreateSetListingInput  = z.infer<typeof CreateSetListingSchema>
+export type SetListingAction       = z.infer<typeof SetListingActionSchema>
 
 // ── Image upload ──────────────────────────────────────────────────────────────
 

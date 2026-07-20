@@ -11,13 +11,25 @@
 // imports all cards to inventory, then calls /api/ebay/bulk-list so listings
 // go live without any extra steps.
 // =============================================================================
-import { useState }     from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter }    from 'next/navigation'
-import { CheckCircle2, Package, TrendingUp, Layers, AlertCircle, Tag } from 'lucide-react'
+import { CheckCircle2, Package, TrendingUp, Layers, AlertCircle, Tag, PackagePlus } from 'lucide-react'
 import { useLots }      from '@/hooks/useLots'
 import { Button }       from '@/components/ui/Button'
 import { cn, formatGBP } from '@/lib/utils'
 import type { BulkWizardCard } from '@/types'
+
+interface RestockPreview {
+  input_index:      number
+  card_name:        string
+  is_restock:       boolean
+  existing_card_id: string | null
+  qty_before:       number | null
+  qty_after:        number | null
+  cost_before:      number | null
+  cost_after:       number | null
+  in_set_listing:   boolean
+}
 
 interface ImportPanelProps {
   computedCards:  BulkWizardCard[]
@@ -25,15 +37,19 @@ interface ImportPanelProps {
   isImporting:    boolean
   importError:    string | null
   onImport:       (opts: {
-    lot_id?:       string
-    source?:       string
-    list_on_ebay?: boolean
-    markup_pct?:   number
+    lot_id?:         string
+    source?:         string
+    list_on_ebay?:   boolean
+    markup_pct?:     number
+    merge_restocks?: boolean
   }) => Promise<{
-    created:          number
-    ebay_listed?:     number
-    ebay_failed?:     number
-    ebay_failed_ids?: string[]
+    created:            number
+    restocked?:         number
+    restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
+    ebay_pushed?:       number
+    ebay_listed?:       number
+    ebay_failed?:       number
+    ebay_failed_ids?:   string[]
   }>
   onBack:         () => void
   onClearAll:     () => void
@@ -54,8 +70,16 @@ export function ImportPanel({
   const [source,      setSource]      = useState('Bulk Wizard')
   const [listOnEbay,  setListOnEbay]  = useState(false)
   const [markupPct,   setMarkupPct]   = useState(10)
+  const [mergeRestocks, setMergeRestocks] = useState(true)
+  const [restockPreview, setRestockPreview] = useState<RestockPreview[] | null>(null)
   const [imported,    setImported]    = useState<{
-    created: number; ebay_listed?: number; ebay_failed?: number; ebay_failed_ids?: string[]
+    created:            number
+    restocked?:         number
+    restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
+    ebay_pushed?:       number
+    ebay_listed?:       number
+    ebay_failed?:       number
+    ebay_failed_ids?:   string[]
   } | null>(null)
   const [isRetrying,  setIsRetrying]  = useState(false)
   const [retryResult, setRetryResult] = useState<{ listed: number; failed: number } | null>(null)
@@ -81,13 +105,58 @@ export function ImportPanel({
   // Estimated total list value
   const totalListValue = listableCards.reduce((s, c) => s + effectiveListPrice(c), 0)
 
+  // ── Restock preview ────────────────────────────────────────────────────────
+  // Fetched once on mount so the user sees which scans will top up existing
+  // stock before committing — restocking blends cost basis, so it shouldn't be
+  // a surprise after the fact.
+  useEffect(() => {
+    if (readyCards.length === 0) return
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const res = await fetch('/api/bulk-wizard/check-restock', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cards: readyCards.map(c => ({
+              card_name:      c.overrides.card_name   ?? c.card_name,
+              set_code:       c.overrides.set_code    ?? c.set_code,
+              card_number:    c.overrides.card_number ?? c.card_number,
+              condition:      c.overrides.condition   ?? c.condition,
+              foil_type:      c.overrides.foil_type   ?? c.foil_type,
+              language:       c.language,
+              purchase_price: c.proportional_cost ?? 0,
+            })),
+          }),
+        })
+        if (!res.ok || cancelled) return
+        const data = await res.json() as { matches: RestockPreview[] }
+        setRestockPreview(data.matches)
+      } catch {
+        // Preview is advisory — import still works without it
+      }
+    })()
+
+    return () => { cancelled = true }
+    // Intentionally mount-only: re-running on every card edit would spam the
+    // endpoint while the user tweaks names in Phase 2.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const restocks       = (restockPreview ?? []).filter(p => p.is_restock)
+  const restockCount   = restocks.length
+  const newCount       = readyCards.length - restockCount
+  const setListingHits = restocks.filter(p => p.in_set_listing).length
+
   async function handleImport() {
     try {
       const result = await onImport({
-        lot_id:       lotId || undefined,
-        source:       source || 'Bulk Wizard',
-        list_on_ebay: listOnEbay || undefined,
-        markup_pct:   listOnEbay ? markupPct : undefined,
+        lot_id:         lotId || undefined,
+        source:         source || 'Bulk Wizard',
+        list_on_ebay:   listOnEbay || undefined,
+        markup_pct:     listOnEbay ? markupPct : undefined,
+        merge_restocks: mergeRestocks,
       })
       setImported(result)
     } catch {
@@ -141,8 +210,18 @@ export function ImportPanel({
         </div>
         <div>
           <h2 className="text-2xl font-bold text-foreground">
-            {imported.created} card{imported.created !== 1 ? 's' : ''} added to stock
+            {imported.created > 0
+              ? `${imported.created} card${imported.created !== 1 ? 's' : ''} added to stock`
+              : 'Stock updated'}
           </h2>
+          {(imported.restocked ?? 0) > 0 && (
+            <p className="text-sm text-teal-400 mt-1">
+              {imported.restocked} existing card{imported.restocked !== 1 ? 's' : ''} restocked
+              {(imported.ebay_pushed ?? 0) > 0 && (
+                <> · quantities pushed to {imported.ebay_pushed} eBay set listing{imported.ebay_pushed !== 1 ? 's' : ''}</>
+              )}
+            </p>
+          )}
           {ebayListed > 0 && (
             <p className="text-sm text-green-400 mt-1">
               {ebayListed} listing{ebayListed !== 1 ? 's' : ''} published on eBay
@@ -242,6 +321,93 @@ export function ImportPanel({
           </div>
         ))}
       </div>
+
+      {/* ── Restock detection ────────────────────────────────────────── */}
+      {restockCount > 0 && (
+        <div className={cn(
+          'rounded-xl border px-4 py-3.5 transition-colors',
+          mergeRestocks
+            ? 'border-teal-500/30 bg-teal-500/5'
+            : 'border-border bg-card',
+        )}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <PackagePlus className="h-3.5 w-3.5 text-teal-400" />
+                {restockCount} card{restockCount !== 1 ? 's' : ''} already in your stock
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {mergeRestocks
+                  ? `Quantities will be topped up instead of creating duplicate rows${newCount > 0 ? ` · ${newCount} new card${newCount !== 1 ? 's' : ''} will be added` : ''}`
+                  : 'Duplicate rows will be created for each scan'}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={mergeRestocks}
+              onClick={() => setMergeRestocks(!mergeRestocks)}
+              className={cn(
+                'relative ml-3 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center rounded-full',
+                'transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1',
+                mergeRestocks ? 'bg-teal-500' : 'bg-secondary border border-border',
+              )}
+            >
+              <span className={cn(
+                'inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform',
+                mergeRestocks ? 'translate-x-4' : 'translate-x-0.5',
+              )} />
+            </button>
+          </div>
+
+          {mergeRestocks && (
+            <div className="mt-3 space-y-2">
+              {/* Per-card restock detail */}
+              <div className="rounded-lg border border-border bg-secondary/40 overflow-hidden">
+                <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
+                  <span>Card</span>
+                  <span className="text-right">Qty</span>
+                  <span className="text-right">Avg cost</span>
+                </div>
+                <div className="max-h-40 overflow-y-auto divide-y divide-border/50">
+                  {restocks.map(p => (
+                    <div key={p.input_index} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 text-xs items-center">
+                      <span className="text-foreground truncate flex items-center gap-1.5">
+                        {p.card_name}
+                        {p.in_set_listing && (
+                          <span className="rounded px-1 py-px text-[9px] font-semibold bg-teal-500/15 text-teal-400 shrink-0">
+                            SET
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-right tabular-nums text-muted-foreground">
+                        {p.qty_before} → <span className="text-foreground font-medium">{p.qty_after}</span>
+                      </span>
+                      <span className="text-right tabular-nums text-muted-foreground">
+                        {p.cost_before != null ? formatGBP(p.cost_before) : '—'}
+                        {' → '}
+                        <span className="text-foreground font-medium">
+                          {p.cost_after != null ? formatGBP(p.cost_after) : '—'}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Cost per card is recalculated as a weighted average across old and new stock,
+                so profit reporting stays accurate.
+                {setListingHits > 0 && (
+                  <> {setListingHits} card{setListingHits !== 1 ? 's are' : ' is'} in a
+                  set listing — the new quantit{setListingHits !== 1 ? 'ies' : 'y'} will be
+                  pushed to eBay automatically.</>
+                )}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Options ──────────────────────────────────────────────────── */}
       <div className="rounded-xl border border-border bg-card divide-y divide-border">
@@ -425,7 +591,9 @@ export function ImportPanel({
         >
           {listOnEbay
             ? `Import & List ${listableCount > 0 ? listableCount : readyCards.length} on eBay`
-            : `Import ${readyCards.length} card${readyCards.length !== 1 ? 's' : ''}`}
+            : mergeRestocks && restockCount > 0
+              ? `Import ${newCount} new · restock ${restockCount}`
+              : `Import ${readyCards.length} card${readyCards.length !== 1 ? 's' : ''}`}
         </Button>
       </div>
     </div>

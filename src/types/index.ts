@@ -9,6 +9,7 @@ export type SubscriptionStatus = 'trial' | 'active' | 'past_due' | 'cancelled'
 export type UserRole      = 'owner' | 'member'
 export type CardStatus    = 'In Stock' | 'Listed' | 'Sold'
 export type CardCondition = 'NM' | 'LP' | 'MP' | 'HP' | 'Sealed'
+export type CardListingType = 'single' | 'variation'
 export type SaleStatus    = 'Sold' | 'Shipped' | 'Fulfilled'
 export type SalePlatform  = 'eBay' | 'Face to Face' | 'Facebook' | 'Other'
 export type ProductType   = 'Booster Box' | 'Elite Trainer Box' | 'Booster Pack' | 'Tin' | 'Collection' | 'Other'
@@ -89,6 +90,9 @@ export interface Card {
   added_by:         string | null
   last_edited_by:   string | null
   lot_id:           string | null
+  // eBay variation listing fields (Sprint 1 migration)
+  listing_type:         CardListingType | null
+  ebay_set_listing_id:  string | null
   created_at:       string
   updated_at:       string
   deleted_at:       string | null
@@ -110,13 +114,26 @@ export interface Sale {
   fees:           number
   shipping:       number
   purchase_price: number
-  profit:         number   // generated column
+  /** Generated: sold_price − refund_amount − fees − shipping − purchase_price */
+  profit:         number
   sale_date:      string
   sale_status:    SaleStatus
   tracking_number: string | null
   sold_by:        string | null
   buyer_id:       string | null
   buyer_name:     string
+  // ── Refunds ───────────────────────────────────────────────────────────────
+  /** Total refunded so far. sold_price is never reduced. */
+  refund_amount:   number
+  refunded_at:     string | null
+  refund_reason:   string | null
+  /** True once the card was returned to stock for this sale */
+  refund_restocked: boolean
+  // ── eBay order sync ───────────────────────────────────────────────────────
+  ebay_order_id:       string | null
+  ebay_transaction_id: string | null
+  /** Imported from eBay but not matched to a card — cost basis unconfirmed */
+  needs_review:        boolean
   created_at:     string
   updated_at:     string
   deleted_at:     string | null
@@ -287,6 +304,37 @@ export interface EbayActiveListing {
   set_code?:      string | null
   condition?:     string | null
   purchase_price?: number | null
+  // Set-listing discrimination — true when this eBay listing is a multi-variation
+  // "Complete Your Set" listing. Such listings must NOT be revised or ended via
+  // the singles endpoints; use /api/ebay/set-listings/[set_listing_id] instead.
+  is_set_listing?:  boolean
+  set_listing_id?:  string | null
+  variation_count?: number
+}
+
+// ── eBay set (multi-variation) listing ───────────────────────────────────────
+
+export type EbaySetListingStatus = 'active' | 'ended' | 'sync_pending'
+
+export interface EbaySetListing {
+  id:               string
+  org_id:           string
+  ebay_listing_id:  string
+  set_code:         string
+  condition:        CardCondition
+  title:            string
+  ebay_url:         string | null
+  variation_count:  number
+  status:           EbaySetListingStatus
+  /** Which eBay environment created this listing — sandbox IDs are not valid in production */
+  environment:      'sandbox' | 'production'
+  /** Last eBay error when a quantity push failed; null when in sync */
+  sync_error:       string | null
+  last_synced_at:   string | null
+  created_at:       string
+  updated_at:       string
+  // Joined — cards associated with this listing
+  variations?:      Pick<Card, 'id' | 'card_name' | 'card_number' | 'qty' | 'listed_price'>[]
 }
 
 // ── API request / response types ─────────────────────────────────────────────
@@ -524,6 +572,10 @@ export interface SaleFilters {
   status:   SaleStatus | 'all'
   from:     string
   to:       string
+  /** 'all' | 'review' (needs cost basis) | 'refunded' */
+  flag:     'all' | 'review' | 'refunded'
+  sort:     'sale_date' | 'sold_price' | 'profit' | 'card_name' | 'buyer_name' | 'qty_sold' | 'fees'
+  order:    'asc' | 'desc'
   page:     number
 }
 

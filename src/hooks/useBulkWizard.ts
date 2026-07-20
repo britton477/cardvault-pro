@@ -182,15 +182,20 @@ export interface BulkWizardHook {
   setLockedSetCode:(s: string) => void
   setRetroMode:    (on: boolean) => void
   importAll:       (opts: {
-    lot_id?:       string
-    source?:       string
-    list_on_ebay?: boolean
-    markup_pct?:   number
+    lot_id?:         string
+    source?:         string
+    list_on_ebay?:   boolean
+    markup_pct?:     number
+    /** Merge scans matching existing stock into that stock. Defaults true. */
+    merge_restocks?: boolean
   }) => Promise<{
-    created:           number
-    ebay_listed?:      number
-    ebay_failed?:      number
-    ebay_failed_ids?:  string[]
+    created:            number
+    restocked?:         number
+    restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
+    ebay_pushed?:       number
+    ebay_listed?:       number
+    ebay_failed?:       number
+    ebay_failed_ids?:   string[]
   }>
 }
 
@@ -382,10 +387,11 @@ export function useBulkWizard(): BulkWizardHook {
 
   // ── Import ────────────────────────────────────────────────────────────────
   const importAll = useCallback(async (opts: {
-    lot_id?:       string
-    source?:       string
-    list_on_ebay?: boolean
-    markup_pct?:   number
+    lot_id?:         string
+    source?:         string
+    list_on_ebay?:   boolean
+    markup_pct?:     number
+    merge_restocks?: boolean
   }) => {
     setIsImporting(true)
     setImportError(null)
@@ -424,9 +430,10 @@ export function useBulkWizard(): BulkWizardHook {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          cards:  payload,
-          lot_id: opts.lot_id || null,
-          source: opts.source || 'Bulk Wizard',
+          cards:          payload,
+          lot_id:         opts.lot_id || null,
+          source:         opts.source || 'Bulk Wizard',
+          merge_restocks: opts.merge_restocks ?? true,
         }),
       })
 
@@ -435,13 +442,32 @@ export function useBulkWizard(): BulkWizardHook {
         throw new Error(err.error ?? `Import failed: ${res.status}`)
       }
 
-      const result = await res.json() as { created: number; card_ids: string[] }
+      const result = await res.json() as {
+        created:           number
+        restocked:         number
+        card_ids:          string[]
+        new_card_ids:      string[]
+        restocked_details: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
+        ebay_pushed:       number
+      }
 
       // ── Upload photos (primary + additional) before eBay listing ─────────
       // Photos must be in storage before the bulk-list route reads card.photos.
       // Runs 3 concurrent uploads; failures are silent — cards are always in stock.
-      if (result.card_ids.length > 0) {
-        await uploadPhotosForCards(readyCards, result.card_ids)
+      //
+      // Only NEW cards get photos. A restock is another copy of a card that
+      // already has images, so uploading again would pile up near-identical
+      // scans on the same row every time stock is topped up.
+      const restockedIds = new Set(result.restocked_details.map(d => d.card_id))
+      const newCardPairs = readyCards
+        .map((card, i) => ({ card, id: result.card_ids[i] ?? '' }))
+        .filter(p => p.id && !restockedIds.has(p.id))
+
+      if (newCardPairs.length > 0) {
+        await uploadPhotosForCards(
+          newCardPairs.map(p => p.card),
+          newCardPairs.map(p => p.id),
+        )
       }
 
       // ── Optionally fire eBay bulk-list with the newly created card IDs ────
@@ -478,7 +504,15 @@ export function useBulkWizard(): BulkWizardHook {
       }
 
       setPhase('import')
-      return { created: result.created, ebay_listed, ebay_failed, ebay_failed_ids }
+      return {
+        created:           result.created,
+        restocked:         result.restocked,
+        restocked_details: result.restocked_details,
+        ebay_pushed:       result.ebay_pushed,
+        ebay_listed,
+        ebay_failed,
+        ebay_failed_ids,
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Import failed'
       setImportError(msg)

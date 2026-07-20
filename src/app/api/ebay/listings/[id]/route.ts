@@ -6,7 +6,7 @@
 import { type NextRequest } from 'next/server'
 import { z, ZodError }      from 'zod'
 import { createClient }     from '@/lib/supabase/server'
-import { requireAuth, ok, serverError, validationError } from '@/lib/api'
+import { requireAuth, ok, serverError, validationError, badRequest } from '@/lib/api'
 import { reviseItem, endItem }  from '@/lib/ebay'
 import { writeAuditLog }        from '@/lib/audit'
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
@@ -16,6 +16,34 @@ interface Ctx { params: Promise<{ id: string }> }
 const ReviseSchema = z.object({
   price: z.number().min(0.01).max(99999),
 })
+
+/**
+ * Guard: these endpoints operate on single-card listings only.
+ *
+ * A multi-variation set listing routed here would cause real damage:
+ *   - PATCH  sends ReviseItem with a single StartPrice, which eBay rejects for
+ *            variation listings (and would be semantically wrong anyway — each
+ *            variation carries its own price).
+ *   - DELETE resets cards WHERE ebay_listing_id = <id>. Variation cards link via
+ *            ebay_set_listing_id, so zero rows match: the eBay listing ends but
+ *            every card stays marked 'Listed' against a listing that no longer
+ *            exists — silent inventory corruption.
+ *
+ * Returns the set listing UUID when the ID belongs to a set listing, else null.
+ */
+async function findSetListing(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  ebayListingId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('ebay_set_listings')
+    .select('id')
+    .eq('org_id', orgId)
+    .eq('ebay_listing_id', ebayListingId)
+    .maybeSingle()
+  return (data?.['id'] as string | undefined) ?? null
+}
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   try {
@@ -28,11 +56,21 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     const body  = await request.json() as unknown
     const input = ReviseSchema.parse(body)
 
+    const supabase = await createClient()
+
+    // Reject set listings — see findSetListing() for why this matters
+    const setListingId = await findSetListing(supabase, orgId, listingId)
+    if (setListingId) {
+      return badRequest(
+        'This is a multi-variation set listing. Revise variation prices via the Set Listings tab.',
+        'is_set_listing',
+      )
+    }
+
     // Revise on eBay
     await reviseItem(orgId, listingId, input.price)
 
     // Update local card's listed_price
-    const supabase = await createClient()
     const { data: card } = await supabase
       .from('cards')
       .update({ listed_price: input.price })
@@ -65,11 +103,22 @@ export async function DELETE(request: NextRequest, { params }: Ctx) {
     const limit = await rateLimit(request, 'ebay-end', { max: 10, window: '1m' })
     if (!limit.success) return tooManyRequests()
 
+    const supabase = await createClient()
+
+    // Reject set listings — ending one here would orphan every variation card
+    // as 'Listed' against a dead listing. See findSetListing() for detail.
+    const setListingId = await findSetListing(supabase, orgId, listingId)
+    if (setListingId) {
+      return badRequest(
+        'This is a multi-variation set listing. End it via the Set Listings tab so all its cards are returned to stock.',
+        'is_set_listing',
+      )
+    }
+
     // End on eBay
     await endItem(orgId, listingId, 'NotAvailable')
 
     // Reset card to In Stock
-    const supabase = await createClient()
     const { data: card } = await supabase
       .from('cards')
       .update({

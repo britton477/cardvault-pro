@@ -15,6 +15,7 @@ import { BulkEbayModal }                     from '@/components/stock/BulkEbayMo
 import { EbayListModal }                     from '@/components/stock/EbayListModal'
 import { useOrgSettings }                    from '@/hooks/useSettings'
 import { BulkAssignLotModal }               from '@/components/stock/BulkAssignLotModal'
+import { CreateSetListingModal }             from '@/components/stock/CreateSetListingModal'
 import { RecordSaleModal }                   from '@/components/sales/RecordSaleModal'
 import { Button }                            from '@/components/ui/Button'
 import { Input }                             from '@/components/ui/Input'
@@ -81,8 +82,9 @@ export function StockView() {
   // ── Bulk selection state ─────────────────────────────────────────────────
 
   const [selectedIds,       setSelectedIds]       = useState<Set<string>>(new Set())
-  const [showEbayModal,     setShowEbayModal]     = useState(false)
-  const [showLotModal,      setShowLotModal]      = useState(false)
+  const [showEbayModal,       setShowEbayModal]       = useState(false)
+  const [showSetListingModal, setShowSetListingModal] = useState(false)
+  const [showLotModal,        setShowLotModal]        = useState(false)
   const [isRefreshing,      setIsRefreshing]      = useState(false)
   const [statusPendingIds,  setStatusPendingIds]  = useState<Set<string>>(new Set())
   const [pricePendingIds,   setPricePendingIds]   = useState<Set<string>>(new Set())
@@ -556,10 +558,23 @@ export function StockView() {
           onDelete={() => { void handleBulkDelete() }}
           onPrint={handlePrintLabels}
           onEbayList={() => setShowEbayModal(true)}
+          onCreateSetListing={() => setShowSetListingModal(true)}
           onAssignLot={() => setShowLotModal(true)}
           onRefreshPrices={() => { void handleRefreshAllPrices() }}
         />
       )}
+
+      {/* Create Set Listing modal — multi-variation eBay listing */}
+      <CreateSetListingModal
+        open={showSetListingModal}
+        onClose={() => setShowSetListingModal(false)}
+        selectedCards={selectedCards}
+        onSuccess={() => {
+          setShowSetListingModal(false)
+          clearSelection()
+          void queryClient.invalidateQueries({ queryKey: ['cards'] })
+        }}
+      />
 
       {/* Bulk assign to lot modal */}
       <BulkAssignLotModal

@@ -29,6 +29,12 @@ interface ConfirmDialogProps {
   /** Makes the confirm button destructive red (default: true) */
   destructive?:  boolean
   loading?:      boolean
+  /**
+   * Optional extra content rendered between the description and the buttons —
+   * for options that modify what confirming actually does (e.g. a "return card
+   * to stock" toggle on a delete).
+   */
+  children?:     React.ReactNode
 }
 
 export function ConfirmDialog({
@@ -41,6 +47,7 @@ export function ConfirmDialog({
   cancelLabel  = 'Cancel',
   destructive  = true,
   loading      = false,
+  children,
 }: ConfirmDialogProps) {
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { if (!o) onCancel() }}>
@@ -72,6 +79,8 @@ export function ConfirmDialog({
               )}
             </div>
           </div>
+
+          {children && <div className="mt-4">{children}</div>}
 
           <div className="flex justify-end gap-3 mt-6">
             <Button

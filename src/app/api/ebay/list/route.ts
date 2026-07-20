@@ -42,6 +42,12 @@ export async function POST(request: NextRequest) {
 
         if (!card) throw new Error('Card not found')
 
+        // Guard: card already sold on eBay inside a multi-variation set listing.
+        // Listing it again as a single would double-list stock held only once.
+        if (card['listing_type'] === 'variation' && card['ebay_set_listing_id']) {
+          throw new Error('Card is already part of a set listing — manage it from the Set Listings tab')
+        }
+
         const photoUrls = (card['photos'] as Array<{ url: string }> ?? [])
           .map((p) => p.url)
 

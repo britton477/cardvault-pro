@@ -1,17 +1,21 @@
 // =============================================================================
 // POST /api/bulk-wizard/import
 //
-// Batch-creates cards from a completed Bulk Wizard session.
+// Batch-creates cards from a completed Bulk Wizard session, merging restocks
+// into existing inventory rather than creating duplicate rows.
 //
 // Key properties vs the single-card POST /api/cards:
-//   - Single DB insert for all N cards (one round-trip, not N)
-//   - Still enforces the plan card_limit before inserting
+//   - Single DB insert for all NEW cards (one round-trip, not N)
+//   - Restocks increment qty on the existing row with a weighted-average cost
+//   - Restocked cards inside a set listing get their new qty pushed to eBay,
+//     batched into ONE API call per set listing
+//   - Enforces the plan card_limit against NEW rows only
 //   - Invalidates the org's Redis dashboard cache
 //   - Writes one consolidated audit log entry
 //   - Rate limited: 5 imports/min (each import creates many cards)
 //
-// Body: { cards: BulkImportCard[], lot_id?, source? }
-// Returns: { created: number, card_ids: string[] }
+// Body: { cards: BulkImportCard[], lot_id?, source?, merge_restocks? }
+// Returns: { created, restocked, card_ids, new_card_ids, restocked_details, ebay_pushed }
 // =============================================================================
 import { type NextRequest } from 'next/server'
 import { z, ZodError }      from 'zod'
@@ -20,6 +24,11 @@ import { requireAuth, ok, forbidden, serverError, validationError } from '@/lib/
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 import { writeAuditLog }   from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
+import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
+import {
+  buildRestockIndex, matchBatch, weightedAverageCost, needsStatusRevival,
+  type RestockCandidate,
+} from '@/lib/restock'
 
 const CardConditionSchema = z.enum(['NM', 'LP', 'MP', 'HP', 'Sealed'])
 
@@ -42,7 +51,23 @@ const BodySchema = z.object({
   cards:  z.array(ImportCardSchema).min(1).max(500),
   lot_id: z.string().uuid().nullish(),
   source: z.string().max(200).optional(),
+  /**
+   * Merge scans that match existing stock into that stock (qty += 1) instead of
+   * creating duplicate rows. Defaults on — duplicate rows fragment inventory and
+   * leave set listings advertising stale quantities. The user can disable it in
+   * the Import panel when they genuinely want separate line items.
+   */
+  merge_restocks: z.boolean().default(true),
 })
+
+interface RestockedDetail {
+  card_id:    string
+  card_name:  string
+  qty_before: number
+  qty_after:  number
+  cost_before: number
+  cost_after:  number
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -57,9 +82,39 @@ export async function POST(request: NextRequest) {
 
     const db = createAdminClient()
 
-    // ── Plan card-limit check ────────────────────────────────────────────────
+    // ── Match incoming scans against existing stock ──────────────────────────
+    // Uses the same helper as the preview endpoint so what the user was shown
+    // in the Import panel is exactly what happens here.
+    let matches = input.cards.map((_, i) => ({ inputIndex: i, existing: null as RestockCandidate | null }))
+
+    if (input.merge_restocks) {
+      const setCodes = [...new Set(input.cards.map(c => c.set_code).filter(Boolean))]
+
+      // NOTE: Sold rows are deliberately NOT filtered out here. isRestockEligible()
+      // decides — it admits sold-out set-listing variations so they can be revived
+      // rather than duplicated. Filtering them in SQL would hide them from that check.
+      let existingQuery = db
+        .from('cards')
+        .select('id, card_name, set_code, card_number, condition, foil_type, language, qty, purchase_price, status, is_graded, listing_type, ebay_set_listing_id')
+        .eq('org_id', orgId)
+        .is('deleted_at', null)
+
+      if (setCodes.length > 0) existingQuery = existingQuery.in('set_code', setCodes)
+
+      const { data: existingCards } = await existingQuery
+      const index = buildRestockIndex((existingCards ?? []) as unknown as RestockCandidate[])
+      matches = matchBatch(input.cards, index)
+    }
+
+    // Split into restocks and genuinely new cards
+    const newIndices     = matches.filter(m => !m.existing).map(m => m.inputIndex)
+    const restockMatches = matches.filter(m => m.existing) as Array<{ inputIndex: number; existing: RestockCandidate }>
+
+    // ── Plan card-limit check — NEW rows only ────────────────────────────────
+    // Restocks add units to rows that already exist and already count against
+    // the limit, so charging them again would block legitimate restocking.
     const cardLimit = user.org?.card_limit ?? 100
-    if (cardLimit > 0) {
+    if (cardLimit > 0 && newIndices.length > 0) {
       const { count: currentCount } = await db
         .from('cards')
         .select('id', { count: 'exact', head: true })
@@ -67,21 +122,68 @@ export async function POST(request: NextRequest) {
         .is('deleted_at', null)
 
       const current = currentCount ?? 0
-      if (current + input.cards.length > cardLimit) {
+      if (current + newIndices.length > cardLimit) {
         const remaining = Math.max(0, cardLimit - current)
         return forbidden(
           remaining === 0
             ? `You've reached the ${cardLimit}-card limit on your current plan. Upgrade to import more cards.`
-            : `This import would exceed your ${cardLimit}-card plan limit. You can import up to ${remaining} more card${remaining !== 1 ? 's' : ''}.`
+            : `This import would exceed your ${cardLimit}-card plan limit. You can import up to ${remaining} more new card${remaining !== 1 ? 's' : ''}.`
         )
       }
     }
 
-    // ── Build insert rows ────────────────────────────────────────────────────
     const now    = new Date().toISOString()
     const source = input.source ?? 'Bulk Wizard'
 
-    const rows = input.cards.map(card => ({
+    // ── Apply restocks ───────────────────────────────────────────────────────
+    // Group by target row first: two identical scans in one batch must become a
+    // single +2 update, not two racing +1 updates that lose one another.
+    const restockAgg = new Map<string, { row: RestockCandidate; addQty: number; costSum: number }>()
+
+    for (const { inputIndex, existing } of restockMatches) {
+      const card = input.cards[inputIndex]!
+      const agg  = restockAgg.get(existing.id)
+      if (agg) {
+        agg.addQty  += 1
+        agg.costSum += card.purchase_price
+      } else {
+        restockAgg.set(existing.id, { row: existing, addQty: 1, costSum: card.purchase_price })
+      }
+    }
+
+    const restockedDetails: RestockedDetail[] = []
+
+    for (const { row, addQty, costSum } of restockAgg.values()) {
+      const addedAvgPrice = addQty > 0 ? costSum / addQty : 0
+      const qtyAfter      = row.qty + addQty
+      const costAfter     = weightedAverageCost(row.qty, row.purchase_price, addQty, addedAvgPrice)
+
+      await db
+        .from('cards')
+        .update({
+          qty:            qtyAfter,
+          purchase_price: costAfter,
+          // A sold-out set-listing variation coming back into stock must return
+          // to 'Listed' — it is a live eBay variation again, not a sold record.
+          ...(needsStatusRevival(row) ? { status: 'Listed' as const } : {}),
+          last_edited_by: user.id,
+          updated_at:     now,
+        })
+        .eq('id', row.id)
+        .eq('org_id', orgId)
+
+      restockedDetails.push({
+        card_id:     row.id,
+        card_name:   row.card_name,
+        qty_before:  row.qty,
+        qty_after:   qtyAfter,
+        cost_before: row.purchase_price,
+        cost_after:  costAfter,
+      })
+    }
+
+    // ── Build insert rows for genuinely new cards ────────────────────────────
+    const rows = newIndices.map(i => input.cards[i]!).map(card => ({
       org_id:         orgId,
       added_by:       user.id,
       card_name:      card.card_name,
@@ -105,15 +207,59 @@ export async function POST(request: NextRequest) {
       updated_at:     now,
     }))
 
-    // ── Single batch insert ──────────────────────────────────────────────────
-    const { data, error } = await db
-      .from('cards')
-      .insert(rows)
-      .select('id')
+    // ── Single batch insert for new cards ────────────────────────────────────
+    let newCardIds: string[] = []
 
-    if (error) return serverError(error)
+    if (rows.length > 0) {
+      const { data, error } = await db
+        .from('cards')
+        .insert(rows)
+        .select('id')
 
-    const card_ids = (data ?? []).map(r => r.id as string)
+      if (error) return serverError(error)
+      newCardIds = (data ?? []).map(r => r.id as string)
+    }
+
+    // ── card_ids in ORIGINAL INPUT ORDER ─────────────────────────────────────
+    // The client maps scanned photos to card IDs positionally. Returning a
+    // reordered or short array would attach photos to the wrong cards.
+    const card_ids: string[] = new Array<string>(input.cards.length)
+    let newIdCursor = 0
+    for (const { inputIndex, existing } of matches) {
+      card_ids[inputIndex] = existing
+        ? existing.id
+        : (newCardIds[newIdCursor++] ?? '')
+    }
+
+    // ── Push restocked quantities to eBay, batched per set listing ───────────
+    // Restocked cards inside a "Complete Your Set" listing must have their new
+    // quantity reflected on eBay or the listing under-advertises stock you hold.
+    //
+    // Grouped by set listing so ten restocks in one set cost ONE eBay API call
+    // rather than ten. Fire-and-forget: inventory is already correct in the DB
+    // and a failed push is recoverable from the Set Listings sync panel.
+    let ebayPushGroups = 0
+
+    const bySetListing = new Map<string, Array<{ sku: string; quantity: number }>>()
+    for (const detail of restockedDetails) {
+      const row = restockAgg.get(detail.card_id)?.row
+      if (!row?.ebay_set_listing_id || row.listing_type !== 'variation') continue
+
+      const group = bySetListing.get(row.ebay_set_listing_id) ?? []
+      group.push({ sku: detail.card_id, quantity: detail.qty_after })
+      bySetListing.set(row.ebay_set_listing_id, group)
+    }
+
+    ebayPushGroups = bySetListing.size
+
+    if (bySetListing.size > 0) {
+      void (async () => {
+        for (const [setListingId, updates] of bySetListing) {
+          // Failures flag the listing sync_pending rather than disappearing
+          await pushQuantitiesWithRecovery(orgId, setListingId, updates)
+        }
+      })()
+    }
 
     // ── Side effects (fire-and-forget) ───────────────────────────────────────
     void invalidateCache(`dashboard:${orgId}`)
@@ -124,14 +270,23 @@ export async function POST(request: NextRequest) {
       action:     'bulk_wizard.import',
       entityType: 'cards',
       after:      {
-        count:     card_ids.length,
+        created:    newCardIds.length,
+        restocked:  restockedDetails.length,
         card_ids,
-        lot_id:    input.lot_id ?? null,
+        restocked_details: restockedDetails,
+        lot_id:     input.lot_id ?? null,
         source,
-      },
+      } as unknown as Record<string, unknown>,
     })
 
-    return ok({ created: card_ids.length, card_ids })
+    return ok({
+      created:           newCardIds.length,
+      restocked:         restockedDetails.length,
+      card_ids,
+      new_card_ids:      newCardIds,
+      restocked_details: restockedDetails,
+      ebay_pushed:       ebayPushGroups,
+    })
   } catch (err) {
     if (err instanceof ZodError) return validationError(err)
     if (err instanceof Response) return err

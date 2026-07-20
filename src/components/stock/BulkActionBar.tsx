@@ -4,24 +4,25 @@
 // Hosts: status dropdown, price button (opens modal), delete with inline confirm.
 // =============================================================================
 import { useState }                from 'react'
-import { X, ChevronDown, Trash2, AlertTriangle, Printer, ShoppingBag, Package, RefreshCw, ReceiptText } from 'lucide-react'
+import { X, ChevronDown, Trash2, AlertTriangle, Printer, ShoppingBag, Package, RefreshCw, ReceiptText, Layers } from 'lucide-react'
 import { cn }                      from '@/lib/utils'
 import type { CardStatus }         from '@/types'
 
 const PRINT_LIMIT = 50
 
 interface BulkActionBarProps {
-  count:             number
-  isPending:         boolean
-  isRefreshing?:     boolean
-  onClear:           () => void
-  onStatusChange:    (status: CardStatus) => void
-  onRegisterSale:    () => void
-  onDelete:          () => void
-  onPrint:           () => void
-  onEbayList:        () => void
-  onAssignLot:       () => void
-  onRefreshPrices:   () => void
+  count:               number
+  isPending:           boolean
+  isRefreshing?:       boolean
+  onClear:             () => void
+  onStatusChange:      (status: CardStatus) => void
+  onRegisterSale:      () => void
+  onDelete:            () => void
+  onPrint:             () => void
+  onEbayList:          () => void
+  onCreateSetListing:  () => void
+  onAssignLot:         () => void
+  onRefreshPrices:     () => void
 }
 
 const STATUS_OPTIONS: { value: CardStatus; label: string; warn?: string }[] = [
@@ -31,7 +32,7 @@ const STATUS_OPTIONS: { value: CardStatus; label: string; warn?: string }[] = [
 ]
 
 export function BulkActionBar({
-  count, isPending, isRefreshing, onClear, onStatusChange, onRegisterSale, onDelete, onPrint, onEbayList, onAssignLot, onRefreshPrices,
+  count, isPending, isRefreshing, onClear, onStatusChange, onRegisterSale, onDelete, onPrint, onEbayList, onCreateSetListing, onAssignLot, onRefreshPrices,
 }: BulkActionBarProps) {
   const [statusOpen,    setStatusOpen]    = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -174,6 +175,17 @@ export function BulkActionBar({
             >
               <ShoppingBag className="h-3.5 w-3.5" />
               List on eBay
+            </button>
+
+            {/* Create Set Listing — teal */}
+            <button
+              onClick={() => { onCreateSetListing(); setStatusOpen(false) }}
+              disabled={isPending}
+              title="Create a multi-variation 'Complete Your Set' listing on eBay"
+              className="inline-flex items-center gap-1.5 rounded-md bg-teal-500/15 border border-teal-500/30 text-teal-400 px-3 py-1.5 text-sm hover:bg-teal-500/25 transition-colors disabled:opacity-50"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              Set Listing
             </button>
 
             {/* Add to lot */}

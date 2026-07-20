@@ -277,13 +277,18 @@ export function StockTable({
                     <ConditionBadge condition={card.condition} />
                   </td>
 
-                  {/* Status + grade */}
+                  {/* Status + grade + listing type */}
                   <td className="px-4 py-2">
                     <div className="flex flex-col gap-1">
                       <StatusBadge status={card.status} />
                       {card.is_graded && card.grader && (
                         <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset bg-purple-500/15 text-purple-400 ring-purple-500/30 whitespace-nowrap">
                           {card.grader} {card.grade}
+                        </span>
+                      )}
+                      {card.listing_type === 'variation' && (
+                        <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset bg-teal-500/15 text-teal-400 ring-teal-500/30 whitespace-nowrap">
+                          Set Listing
                         </span>
                       )}
                     </div>

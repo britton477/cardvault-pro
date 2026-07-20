@@ -91,9 +91,20 @@ export async function POST(request: NextRequest) {
 
       const card_name = card.card_name as string
 
-      // Already listed
+      // Already listed as a single
       if (card.status === 'Listed' && card.ebay_listing_id) {
         skipped.push({ card_id, card_name, reason: 'Already listed on eBay' })
+        continue
+      }
+
+      // Already part of a multi-variation set listing.
+      //
+      // These cards carry status='Listed' but ebay_listing_id is NULL — they link
+      // via ebay_set_listing_id instead — so the check above does not catch them.
+      // Without this guard the same physical card gets a second, independent eBay
+      // listing: two buyers can purchase stock you only hold once.
+      if (card.listing_type === 'variation' && card.ebay_set_listing_id) {
+        skipped.push({ card_id, card_name, reason: 'Already in a set listing' })
         continue
       }
 

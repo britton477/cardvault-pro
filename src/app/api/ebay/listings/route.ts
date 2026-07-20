@@ -34,8 +34,9 @@ export async function GET(request: NextRequest) {
 
     if (ebayListings.length === 0) return ok({ data: [], count: 0 })
 
-    // 2. Load cards that have an ebay_listing_id set — to enrich eBay data
     const listingIds = ebayListings.map(l => l.listingId)
+
+    // 2. Load single-card listings — enriches eBay data with local card info
     const { data: cards } = await supabase
       .from('cards')
       .select('id, card_name, set_code, condition, purchase_price, ebay_listing_id')
@@ -46,16 +47,54 @@ export async function GET(request: NextRequest) {
       (cards ?? []).map(c => [c['ebay_listing_id'] as string, c]),
     )
 
-    // 3. Merge eBay data with local card data
+    // 3. Load multi-variation set listings.
+    //
+    // IMPORTANT: set listings must be flagged, not treated as singles. Their
+    // variation cards link via cards.ebay_set_listing_id (not ebay_listing_id),
+    // so they'd otherwise appear here as unmatched rows where:
+    //   - inline price revise would send ReviseItem/StartPrice → invalid on a
+    //     variation listing and rejected by eBay
+    //   - "End" would reset cards WHERE ebay_listing_id = <id>, matching zero
+    //     variation cards and orphaning them as 'Listed' against a dead listing
+    // The UI routes anything flagged here to the Set Listings tab instead.
+    const { data: setListings } = await supabase
+      .from('ebay_set_listings')
+      .select('id, ebay_listing_id, set_code, condition, title, variation_count')
+      .eq('org_id', orgId)
+      .in('ebay_listing_id', listingIds)
+
+    const setListingByEbayId = Object.fromEntries(
+      (setListings ?? []).map(s => [s['ebay_listing_id'] as string, s]),
+    )
+
+    // 4. Merge eBay data with local card / set-listing data
     const enriched = ebayListings.map(listing => {
+      const setListing = setListingByEbayId[listing.listingId]
+
+      if (setListing) {
+        return {
+          ...listing,
+          is_set_listing:  true,
+          set_listing_id:  setListing['id']              as string,
+          card_id:         null,
+          card_name:       setListing['title']           as string,
+          set_code:        setListing['set_code']        as string | null,
+          condition:       setListing['condition']       as string | null,
+          purchase_price:  null,
+          variation_count: setListing['variation_count'] as number,
+        }
+      }
+
       const card = cardsByListingId[listing.listingId]
       return {
         ...listing,
+        is_set_listing: false,
+        set_listing_id: null,
         card_id:        card?.['id']             ?? null,
-        card_name:      card?.['card_name']       ?? listing.title,
-        set_code:       card?.['set_code']        ?? null,
-        condition:      card?.['condition']       ?? null,
-        purchase_price: card?.['purchase_price']  ?? null,
+        card_name:      card?.['card_name']      ?? listing.title,
+        set_code:       card?.['set_code']       ?? null,
+        condition:      card?.['condition']      ?? null,
+        purchase_price: card?.['purchase_price'] ?? null,
       }
     })
 

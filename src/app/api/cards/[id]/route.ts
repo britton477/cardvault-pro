@@ -10,6 +10,7 @@ import { requireAuth, ok, noContent, notFound, forbidden, serverError, validatio
 import { UpdateCardSchema } from '@/types/validation'
 import { writeAuditLog } from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
+import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -45,10 +46,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const supabase = await createClient()
 
-    // Verify ownership before update
+    // Verify ownership before update — also load variation fields for qty push
     const { data: existing } = await supabase
       .from('cards')
-      .select('id, org_id')
+      .select('id, org_id, qty, listing_type, ebay_set_listing_id')
       .eq('id', id)
       .eq('org_id', orgId)
       .is('deleted_at', null)
@@ -64,6 +65,25 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       .single()
 
     if (error) return serverError(error)
+
+    // ── Auto-push qty to eBay for variation cards ─────────────────────────────
+    // When qty changes on a card that's part of a multi-variation listing,
+    // push the new quantity to eBay. Fire-and-forget so the card update never
+    // blocks on eBay API latency.
+    if (
+      input.qty != null &&
+      input.qty !== (existing['qty'] as number) &&
+      existing['listing_type'] === 'variation' &&
+      existing['ebay_set_listing_id']
+    ) {
+      // A failed push flags the set listing sync_pending so the drift is visible
+      // in the Set Listings tab instead of vanishing into the server log.
+      void pushQuantitiesWithRecovery(
+        orgId,
+        existing['ebay_set_listing_id'] as string,
+        [{ sku: id, quantity: input.qty }],
+      )
+    }
 
     void writeAuditLog({
       orgId: orgId, userId: user.id,

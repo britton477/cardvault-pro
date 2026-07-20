@@ -506,6 +506,316 @@ export async function endItem(
   await callTradingApi('EndItem', xml, token, creds.appId)
 }
 
+// ── Multi-variation "Complete Your Set" listings ──────────────────────────────
+//
+// Overview:
+//   eBay allows up to 250 variations within a single FixedPriceItem listing.
+//   Each variation is one card identified by its UUID (card.id) as the eBay SKU.
+//   The variation specifier is "Card Name" — displayed to the buyer in the listing.
+//   When multiple cards share the same name, the card number is appended:
+//   e.g. "Charizard" (unique) vs "Charizard #006/198" (disambiguated).
+//
+// Functions:
+//   createVariationListing   — AddFixedPriceItem with <Variations> block
+//   updateVariationQuantities — ReviseFixedPriceItem targeting variations by SKU
+//   addVariationsToListing   — Adds new cards to an existing set listing
+//   syncVariationQuantities  — GetItem to detect eBay qty drift vs DB qty
+
+/**
+ * eBay's hard ceiling on variations within a single fixed-price listing.
+ * Exceeding it is rejected at the API layer, so callers must check BEFORE
+ * mutating local state.
+ */
+export const EBAY_MAX_VARIATIONS = 250
+
+export interface VariationInput {
+  sku:         string   // card.id — stored as eBay SKU for all future updates
+  displayName: string   // value shown to buyer (e.g. "Charizard" or "Charizard #006/198")
+  price:       number
+  quantity:    number
+}
+
+export interface CreateVariationListingOptions {
+  orgId:               string
+  title:               string
+  description:         string
+  /** Condition applied at item level — all cards in a set listing share one condition */
+  condition:           string
+  setCode?:            string
+  /** Max 250 variations */
+  variations:          VariationInput[]
+  photoUrls:           string[]
+  location:            string
+  fulfillmentPolicyId: string
+  paymentPolicyId:     string
+  returnPolicyId:      string
+}
+
+export interface CreateVariationListingResult {
+  ebayListingId: string
+  itemUrl:       string
+}
+
+/**
+ * Create a multi-variation "Complete Your Set" listing on eBay.
+ *
+ * Each variation is one card, identified by its UUID (card.id) as the eBay SKU.
+ * The SKU is the stable link between CardVault Pro and eBay — use it for all
+ * future ReviseFixedPriceItem calls to update quantity or price without relying
+ * on string matching.
+ *
+ * Condition is applied at the item level (all cards in a set listing share one
+ * condition). This is standard practice for "Complete Your Set" listings.
+ *
+ * Returns { ebayListingId, itemUrl } on success.
+ */
+export async function createVariationListing(
+  opts: CreateVariationListingOptions,
+): Promise<CreateVariationListingResult> {
+  const creds = await getCredentials(opts.orgId)
+  const token = await getValidAccessToken(opts.orgId)
+
+  if (opts.variations.length === 0)
+    throw new Error('createVariationListing: at least one variation required')
+  if (opts.variations.length > EBAY_MAX_VARIATIONS)
+    throw new Error(`createVariationListing: eBay limits variation listings to ${EBAY_MAX_VARIATIONS} variations`)
+
+  // Variation listings are always ungraded raw cards — graded slabs are listed as singles
+  const condId     = '4000'
+  const cardCondId = UNGRADED_COND_ID[opts.condition] ?? UNGRADED_COND_ID['NM']!
+
+  // VariationSpecificsSet: every possible "Card Name" value in the listing
+  const allNamesXml = opts.variations
+    .map(v => `      <Value>${escapeXml(v.displayName)}</Value>`)
+    .join('\n')
+
+  // Individual Variation blocks — one per card
+  const variationsXml = opts.variations.map(v => `    <Variation>
+      <SKU>${escapeXml(v.sku)}</SKU>
+      <StartPrice>${v.price.toFixed(2)}</StartPrice>
+      <Quantity>${v.quantity}</Quantity>
+      <VariationSpecifics>
+        <NameValueList>
+          <Name>Card Name</Name>
+          <Value>${escapeXml(v.displayName)}</Value>
+        </NameValueList>
+      </VariationSpecifics>
+    </Variation>`).join('\n')
+
+  const pictures = opts.photoUrls
+    .map(u => `<PictureURL>${u}</PictureURL>`)
+    .join('\n      ')
+
+  const xml = `${buildXmlHeader('AddFixedPriceItem', token)}
+  <Item>
+    <Title>${escapeXml(opts.title)}</Title>
+    <Description><![CDATA[${opts.description}]]></Description>
+    <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>
+    <ConditionID>${condId}</ConditionID>
+    <ConditionDescriptors>
+      <ConditionDescriptor><Name>40001</Name><Value>${cardCondId}</Value></ConditionDescriptor>
+    </ConditionDescriptors>
+    <ItemSpecifics>
+      <NameValueList><Name>Game</Name><Value>Pokémon</Value></NameValueList>
+      <NameValueList><Name>Graded</Name><Value>No</Value></NameValueList>${opts.setCode ? `
+      <NameValueList><Name>Set</Name><Value>${escapeXml(opts.setCode)}</Value></NameValueList>` : ''}
+      <NameValueList><Name>Type</Name><Value>Individual Cards</Value></NameValueList>
+    </ItemSpecifics>
+    <Variations>
+      <VariationSpecificsSet>
+        <NameValueList>
+          <Name>Card Name</Name>
+${allNamesXml}
+        </NameValueList>
+      </VariationSpecificsSet>
+${variationsXml}
+    </Variations>
+    <Country>GB</Country>
+    <Currency>GBP</Currency>
+    <DispatchTimeMax>3</DispatchTimeMax>
+    <ListingDuration>GTC</ListingDuration>
+    <ListingType>FixedPriceItem</ListingType>
+    <Location>${escapeXml(opts.location)}</Location>
+    <PictureDetails>
+      ${pictures}
+    </PictureDetails>
+    <SellerProfiles>
+      <SellerShippingProfile>
+        <ShippingProfileID>${opts.fulfillmentPolicyId}</ShippingProfileID>
+      </SellerShippingProfile>
+      <SellerPaymentProfile>
+        <PaymentProfileID>${opts.paymentPolicyId}</PaymentProfileID>
+      </SellerPaymentProfile>
+      <SellerReturnProfile>
+        <ReturnProfileID>${opts.returnPolicyId}</ReturnProfileID>
+      </SellerReturnProfile>
+    </SellerProfiles>
+  </Item>
+</AddFixedPriceItemRequest>`
+
+  const response      = await callTradingApi('AddFixedPriceItem', xml, token, creds.appId)
+  const ebayListingId = extractXmlField(response, 'ItemID')
+  if (!ebayListingId) throw new Error('createVariationListing: eBay did not return an ItemID')
+
+  const itemUrl = IS_SANDBOX
+    ? `https://www.sandbox.ebay.co.uk/itm/${ebayListingId}`
+    : `https://www.ebay.co.uk/itm/${ebayListingId}`
+
+  return { ebayListingId, itemUrl }
+}
+
+export interface VariationQtyUpdate {
+  sku:      string   // card.id
+  quantity: number
+  price?:   number   // optional — omit to leave existing price unchanged
+}
+
+/**
+ * Update quantities (and optionally prices) for one or more variations in a
+ * multi-variation listing. Batches all changes into a single ReviseFixedPriceItem call.
+ *
+ * eBay matches variations by SKU (which we set to card.id at creation time),
+ * so this is robust against title changes and card name renames.
+ */
+export async function updateVariationQuantities(
+  orgId:         string,
+  ebayListingId: string,
+  updates:       VariationQtyUpdate[],
+): Promise<void> {
+  if (updates.length === 0) return
+
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const variationsXml = updates.map(u => `    <Variation>
+      <SKU>${escapeXml(u.sku)}</SKU>
+      <Quantity>${u.quantity}</Quantity>${u.price != null ? `
+      <StartPrice>${u.price.toFixed(2)}</StartPrice>` : ''}
+    </Variation>`).join('\n')
+
+  const xml = `${buildXmlHeader('ReviseFixedPriceItem', token)}
+  <Item>
+    <ItemID>${ebayListingId}</ItemID>
+    <Variations>
+${variationsXml}
+    </Variations>
+  </Item>
+</ReviseFixedPriceItemRequest>`
+
+  await callTradingApi('ReviseFixedPriceItem', xml, token, creds.appId)
+}
+
+/**
+ * Add new card variations to an existing multi-variation listing.
+ *
+ * eBay requires the full VariationSpecificsSet to be re-sent with all values
+ * (existing + new) whenever you add variations. The caller supplies the
+ * existing display names so we can build the merged set correctly.
+ *
+ * Only the NEW variations are sent as <Variation> entries — existing ones
+ * are left untouched by eBay when not included in the revise call.
+ */
+export async function addVariationsToListing(
+  orgId:          string,
+  ebayListingId:  string,
+  newVariations:  VariationInput[],
+  existingNames:  string[],  // display names already in the eBay listing
+): Promise<void> {
+  if (newVariations.length === 0) return
+
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  // Merge existing + new display names — eBay requires the full set on every revise
+  const mergedNamesXml = [...existingNames, ...newVariations.map(v => v.displayName)]
+    .map(n => `      <Value>${escapeXml(n)}</Value>`)
+    .join('\n')
+
+  const newVariationsXml = newVariations.map(v => `    <Variation>
+      <SKU>${escapeXml(v.sku)}</SKU>
+      <StartPrice>${v.price.toFixed(2)}</StartPrice>
+      <Quantity>${v.quantity}</Quantity>
+      <VariationSpecifics>
+        <NameValueList>
+          <Name>Card Name</Name>
+          <Value>${escapeXml(v.displayName)}</Value>
+        </NameValueList>
+      </VariationSpecifics>
+    </Variation>`).join('\n')
+
+  const xml = `${buildXmlHeader('ReviseFixedPriceItem', token)}
+  <Item>
+    <ItemID>${ebayListingId}</ItemID>
+    <Variations>
+      <VariationSpecificsSet>
+        <NameValueList>
+          <Name>Card Name</Name>
+${mergedNamesXml}
+        </NameValueList>
+      </VariationSpecificsSet>
+${newVariationsXml}
+    </Variations>
+  </Item>
+</ReviseFixedPriceItemRequest>`
+
+  await callTradingApi('ReviseFixedPriceItem', xml, token, creds.appId)
+}
+
+export interface VariationQtyDiscrepancy {
+  sku:         string   // card.id
+  displayName: string
+  ebayQty:     number   // what eBay currently shows
+  dbQty:       number   // what our DB thinks it should be
+  /** ebayQty - dbQty. Negative means eBay sold some and DB wasn't updated. */
+  discrepancy: number
+}
+
+/**
+ * Compare eBay's current variation quantities against the DB quantities.
+ * Returns only variations where quantities differ, so callers can decide
+ * whether to push the DB state to eBay or pull the eBay state into the DB.
+ *
+ * Uses GetItem (Trading API) to retrieve the live eBay state — each call
+ * costs one Trading API quota unit so call sparingly (e.g. on-demand sync,
+ * not on every page load).
+ */
+export async function syncVariationQuantities(
+  orgId:         string,
+  ebayListingId: string,
+  dbVariations:  Array<{ sku: string; displayName: string; qty: number }>,
+): Promise<VariationQtyDiscrepancy[]> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const xml = `${buildXmlHeader('GetItem', token)}
+  <ItemID>${ebayListingId}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <IncludeItemSpecifics>false</IncludeItemSpecifics>
+</GetItemRequest>`
+
+  const response = await callTradingApi('GetItem', xml, token, creds.appId)
+
+  // Parse each <Variation> block for SKU + Quantity
+  const variationBlocks = [...response.matchAll(/<Variation>([\s\S]*?)<\/Variation>/g)]
+  const ebayQtyBySku    = new Map<string, number>()
+  for (const m of variationBlocks) {
+    const block = m[1] ?? ''
+    const sku   = extractXmlField(block, 'SKU')
+    const qty   = parseInt(extractXmlField(block, 'Quantity') || '0', 10)
+    if (sku) ebayQtyBySku.set(sku, qty)
+  }
+
+  return dbVariations
+    .map(v => ({
+      sku:         v.sku,
+      displayName: v.displayName,
+      ebayQty:     ebayQtyBySku.get(v.sku) ?? 0,
+      dbQty:       v.qty,
+      discrepancy: (ebayQtyBySku.get(v.sku) ?? 0) - v.qty,
+    }))
+    .filter(d => d.discrepancy !== 0)
+}
+
 // ── Get active listings ───────────────────────────────────────────────────────
 
 export interface EbayActiveListing {
@@ -571,6 +881,179 @@ export async function getActiveListings(orgId: string): Promise<EbayActiveListin
     if (l.price === 0) console.warn(`[getActiveListings] price=0 for listing ${l.listingId} — check XML`)
     return true
   })
+}
+
+// ── GetOrders — completed sales ───────────────────────────────────────────────
+//
+// One eBay ORDER can contain several TRANSACTIONS (a buyer purchasing three
+// different cards in one checkout). CardVault records one sale per transaction,
+// because each maps to a different card with its own cost basis.
+//
+// Order-level money (postage the buyer paid, and the order total) cannot be
+// attributed to a single transaction, so we keep per-transaction item pricing
+// and apportion nothing. Postage is recorded on the order for reference only.
+
+export interface EbayOrderTransaction {
+  orderId:         string
+  transactionId:   string
+  /** SKU we set at listing time — card.id for both singles and variations */
+  sku:             string
+  listingId:       string
+  title:           string
+  /** Variation name for multi-variation listings, e.g. "Charizard #006/198" */
+  variationName:   string
+  quantity:        number
+  /** Per-unit price paid by the buyer, excluding postage */
+  unitPrice:       number
+  /** Total for this line: unitPrice × quantity */
+  linePrice:       number
+  buyerUserId:     string
+  buyerName:       string
+  /** Postage the BUYER paid on this line (not the seller's label cost) */
+  shippingPaid:    number
+  /** eBay's Final Value / Buyer Protection fee for this line where reported */
+  feeAmount:       number
+  saleDate:        string   // ISO
+  orderStatus:     string   // Completed | Active | Cancelled | Inactive
+  paidStatus:      string
+  shippedStatus:   string
+  trackingNumber:  string
+}
+
+/**
+ * Fetch orders created within a date range.
+ *
+ * eBay caps GetOrders at a 30-day window per call, so longer ranges are split
+ * into 30-day chunks automatically. Results are paginated at 100 per page.
+ *
+ * Only orders whose payment has cleared are useful as sales, but we return
+ * everything and let the caller decide — cancelled orders matter for reversing
+ * a previously synced sale.
+ */
+export async function getOrders(
+  orgId: string,
+  fromDate: Date,
+  toDate: Date = new Date(),
+): Promise<EbayOrderTransaction[]> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+  const all: EbayOrderTransaction[] = []
+
+  // Split into ≤30-day windows — eBay rejects wider ranges outright
+  let windowStart = new Date(fromDate)
+  while (windowStart < toDate) {
+    const windowEnd = new Date(Math.min(windowStart.getTime() + MAX_WINDOW_MS, toDate.getTime()))
+
+    let pageNumber = 1
+    let hasMore    = true
+
+    while (hasMore && pageNumber <= 50) {   // hard stop — 5000 orders per window
+      const xml = `${buildXmlHeader('GetOrders', token)}
+  <CreateTimeFrom>${windowStart.toISOString()}</CreateTimeFrom>
+  <CreateTimeTo>${windowEnd.toISOString()}</CreateTimeTo>
+  <OrderRole>Seller</OrderRole>
+  <OrderStatus>All</OrderStatus>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <Pagination>
+    <EntriesPerPage>100</EntriesPerPage>
+    <PageNumber>${pageNumber}</PageNumber>
+  </Pagination>
+</GetOrdersRequest>`
+
+      const response = await callTradingApi('GetOrders', xml, token, creds.appId)
+
+      const orderBlocks = [...response.matchAll(/<Order>([\s\S]*?)<\/Order>/g)]
+      for (const om of orderBlocks) {
+        const orderBlock = om[1] ?? ''
+
+        const orderId       = extractXmlField(orderBlock, 'OrderID')
+        const orderStatus   = extractXmlField(orderBlock, 'OrderStatus')
+        const paidStatus    = extractXmlField(orderBlock, 'CheckoutStatus')
+        const buyerUserId   = extractXmlField(orderBlock, 'BuyerUserID')
+        const shippedStatus = extractXmlField(orderBlock, 'ShippedTime') ? 'Shipped' : 'NotShipped'
+        const trackingNumber = extractXmlField(orderBlock, 'ShipmentTrackingNumber')
+
+        // Buyer's display name lives in the shipping address block
+        const addressBlock = orderBlock.match(/<ShippingAddress>([\s\S]*?)<\/ShippingAddress>/)?.[1] ?? ''
+        const buyerName    = extractXmlField(addressBlock, 'Name')
+
+        const txBlocks = [...orderBlock.matchAll(/<Transaction>([\s\S]*?)<\/Transaction>/g)]
+        for (const tm of txBlocks) {
+          const tx = tm[1] ?? ''
+
+          const transactionId = extractXmlField(tx, 'TransactionID')
+          const quantity      = parseInt(extractXmlField(tx, 'QuantityPurchased') || '1', 10)
+          const unitPrice     = parseFloat(extractXmlField(tx, 'TransactionPrice') || '0')
+
+          // Item block — listing ID, title, and the SKU we assigned
+          const itemBlock = tx.match(/<Item>([\s\S]*?)<\/Item>/)?.[1] ?? ''
+          const listingId = extractXmlField(itemBlock, 'ItemID')
+          const title     = extractXmlField(itemBlock, 'Title')
+
+          // SKU resolution order matters for variation listings:
+          //   Variation<SKU>  — set per-variation at creation (card.id)
+          //   Transaction SKU — some payloads surface it at this level
+          //   Item<SKU>       — single-listing fallback
+          const variationBlock = tx.match(/<Variation>([\s\S]*?)<\/Variation>/)?.[1] ?? ''
+          const sku =
+            extractXmlField(variationBlock, 'SKU') ||
+            extractXmlField(tx, 'SKU') ||
+            extractXmlField(itemBlock, 'SKU')
+
+          // Variation display name, e.g. Card Name = "Charizard #006/198"
+          const variationName = variationBlock
+            ? extractXmlField(variationBlock, 'Value')
+            : ''
+
+          const shippingPaid = parseFloat(
+            extractXmlField(tx, 'ActualShippingCost') || '0',
+          )
+
+          // Final Value Fee where eBay reports it on the transaction
+          const feeAmount = parseFloat(extractXmlField(tx, 'FinalValueFee') || '0')
+
+          const saleDate =
+            extractXmlField(tx, 'CreatedDate') ||
+            extractXmlField(tx, 'PaidTime') ||
+            extractXmlField(orderBlock, 'CreatedTime')
+
+          if (!transactionId || !orderId) continue
+
+          all.push({
+            orderId,
+            transactionId,
+            sku,
+            listingId,
+            title,
+            variationName,
+            quantity,
+            unitPrice,
+            linePrice: Math.round(unitPrice * quantity * 100) / 100,
+            buyerUserId,
+            buyerName,
+            shippingPaid,
+            feeAmount,
+            saleDate,
+            orderStatus,
+            paidStatus,
+            shippedStatus,
+            trackingNumber,
+          })
+        }
+      }
+
+      // Continue while eBay reports more pages
+      const totalPages = parseInt(extractXmlField(response, 'TotalNumberOfPages') || '1', 10)
+      hasMore = pageNumber < totalPages
+      pageNumber++
+    }
+
+    windowStart = new Date(windowEnd.getTime() + 1000)
+  }
+
+  return all
 }
 
 // ── Browse API — active listing price lookup ──────────────────────────────────
