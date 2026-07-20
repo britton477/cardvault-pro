@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
   const summary = {
     orgs_scanned: orgIds.length,
     imported:     0,
+    linked:       0,
     skipped:      0,
     unmatched:    0,
     cancelled:    0,
@@ -68,12 +69,13 @@ export async function GET(request: NextRequest) {
       const res = await syncEbayOrders(orgId, LOOKBACK_DAYS, null)
 
       summary.imported  += res.imported
+      summary.linked    += res.linked
       summary.skipped   += res.skipped
       summary.unmatched += res.unmatched
       summary.cancelled += res.cancelled
 
       // Only bust the dashboard cache when something actually changed
-      if (res.imported > 0) {
+      if (res.imported > 0 || res.linked > 0) {
         void invalidateCache(`dashboard:${orgId}`)
         void db.rpc('refresh_dashboard_cache', { p_org_id: orgId })
       }

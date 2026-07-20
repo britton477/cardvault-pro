@@ -160,6 +160,8 @@ export interface SyncOrdersResult {
   scanned:   number
   imported:  number
   skipped:   number
+  /** Matched a sale you had already recorded by hand, and claimed it */
+  linked:    number
   unmatched: number
   cancelled: number
   errors:    string[]

@@ -330,6 +330,15 @@ async function callTradingApi(
 
 export interface ListItemOptions {
   orgId:               string
+  /**
+   * eBay SKU — always the card UUID.
+   *
+   * This is the durable link between an eBay order and the card it came from.
+   * Order sync matches on SKU first because ebay_listing_id gets cleared when a
+   * listing ends or a card is marked Sold, at which point an incoming order has
+   * nothing left to match against and lands in the needs-review bucket.
+   */
+  sku:                 string
   title:               string
   description:         string
   condition:           string
@@ -427,6 +436,7 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
 
   const xml = `${buildXmlHeader('AddFixedPriceItem', token)}
   <Item>
+    <SKU>${escapeXml(opts.sku)}</SKU>
     <Title>${escapeXml(opts.title)}</Title>
     <Description><![CDATA[${opts.description}]]></Description>
     <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>

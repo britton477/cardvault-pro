@@ -19,10 +19,22 @@ export interface SyncOrdersResult {
   scanned:    number   // transactions returned by eBay
   imported:   number   // new sales created
   skipped:    number   // already imported
+  linked:     number   // matched an existing manual sale and claimed it
   unmatched:  number   // imported but flagged needs_review
   cancelled:  number   // skipped because the order was cancelled
   errors:     string[]
 }
+
+/**
+ * How many days either side of the eBay sale date to search for a manually
+ * recorded sale of the same card.
+ *
+ * Sellers commonly log a sale when they post the parcel rather than when the
+ * order landed, so a same-day-only match would miss most of them. Three days
+ * covers normal handling time without being loose enough to swallow a genuine
+ * second sale of the same card.
+ */
+const DUPLICATE_WINDOW_DAYS = 3
 
 /** eBay order states that should never become a sale. */
 const NON_SALE_STATUSES = new Set(['Cancelled', 'Inactive', 'Invalid'])
@@ -80,7 +92,7 @@ export async function syncEbayOrders(
 ): Promise<SyncOrdersResult> {
   const db = createAdminClient()
   const result: SyncOrdersResult = {
-    scanned: 0, imported: 0, skipped: 0, unmatched: 0, cancelled: 0, errors: [],
+    scanned: 0, imported: 0, skipped: 0, linked: 0, unmatched: 0, cancelled: 0, errors: [],
   }
 
   const from = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000)
@@ -127,6 +139,56 @@ export async function syncEbayOrders(
     const card = resolveCard(tx, byId, byListingId)
 
     try {
+      // ── Claim an existing manual sale rather than duplicating it ──────────
+      //
+      // Idempotency only stops the same eBay order importing twice. It cannot
+      // see a sale the user already typed in by hand, because those carry no
+      // order ID — so without this check, anyone who has been recording eBay
+      // sales manually gets a full set of duplicates on their first sync.
+      //
+      // When a manual sale of the same card exists near the same date, stamp
+      // the eBay identifiers onto it instead of creating a second row. The
+      // user's own figures win (they reflect what actually landed, including
+      // postage), and the order is marked as handled so it never re-imports.
+      if (card) {
+        const saleDateIso = tx.saleDate
+          ? tx.saleDate.slice(0, 10)
+          : new Date().toISOString().slice(0, 10)
+        const windowMs = DUPLICATE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        const from = new Date(new Date(saleDateIso).getTime() - windowMs).toISOString().slice(0, 10)
+        const to   = new Date(new Date(saleDateIso).getTime() + windowMs).toISOString().slice(0, 10)
+
+        const { data: candidates } = await db
+          .from('sales')
+          .select('id, sold_price, sale_date')
+          .eq('org_id', orgId)
+          .eq('card_id', card.id)
+          .is('ebay_order_id', null)     // manual entries only
+          .is('deleted_at', null)
+          .gte('sale_date', from)
+          .lte('sale_date', to)
+          .order('sale_date', { ascending: true })
+          .limit(1)
+
+        const existing = candidates?.[0]
+        if (existing) {
+          await db
+            .from('sales')
+            .update({
+              ebay_order_id:       tx.orderId,
+              ebay_transaction_id: tx.transactionId,
+              // Fill the tracking number only if the user hasn't already
+              ...(tx.trackingNumber ? { tracking_number: tx.trackingNumber } : {}),
+              updated_at:          new Date().toISOString(),
+            })
+            .eq('id', existing['id'])
+            .eq('org_id', orgId)
+
+          result.linked++
+          continue
+        }
+      }
+
       // Cost basis comes from the matched card. Unmatched orders get 0 and are
       // flagged — an invented cost would quietly distort profit.
       const purchasePrice = card ? card.purchase_price : 0

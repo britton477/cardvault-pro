@@ -77,6 +77,8 @@ export async function POST(request: NextRequest) {
 
         const listingId = await listItem({
           orgId,
+          // SKU = card UUID, so eBay order sync can always resolve the card
+          sku:                  card_id,
           title,
           description,
           condition:            card['condition'] as string,

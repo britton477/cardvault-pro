@@ -251,11 +251,12 @@ export function SalesView() {
       const res = await syncOrders.mutateAsync(7)
       const parts: string[] = []
       if (res.imported  > 0) parts.push(`${res.imported} imported`)
+      if (res.linked    > 0) parts.push(`${res.linked} matched to sales you'd already recorded`)
       if (res.skipped   > 0) parts.push(`${res.skipped} already synced`)
       if (res.unmatched > 0) parts.push(`${res.unmatched} need review`)
       if (res.cancelled > 0) parts.push(`${res.cancelled} cancelled`)
 
-      if (res.imported > 0) {
+      if (res.imported > 0 || res.linked > 0) {
         toast.success('eBay orders synced', parts.join(' · '))
       } else {
         toast.info('Nothing new', parts.length ? parts.join(' · ') : 'No new orders found on eBay')
