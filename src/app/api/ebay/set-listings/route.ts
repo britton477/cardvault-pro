@@ -25,6 +25,7 @@ import {
 import { writeAuditLog } from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
 import { CreateSetListingSchema } from '@/types/validation'
+import { plainTextToEbayHtml } from '@/lib/listing-templates'
 
 // Display names come from buildUniqueDisplayNames() in lib/ebay.ts — shared
 // with the add-cards route so both produce identical labels, and guaranteed
@@ -140,7 +141,13 @@ export async function POST(request: NextRequest) {
     const { ebayListingId, itemUrl } = await createVariationListing({
       orgId,
       title:               input.title,
-      description:         input.description,
+      // The description is authored and stored as plain text so it stays
+      // editable in a textarea. eBay renders HTML, so convert on the way out —
+      // otherwise every newline collapses and it reads as one long blob.
+      description:         plainTextToEbayHtml(
+        input.description,
+        (settings['shop_name'] as string | null) ?? undefined,
+      ),
       condition:           input.condition,
       setCode:             input.set_code || undefined,
       variations,

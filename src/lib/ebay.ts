@@ -781,15 +781,24 @@ export async function createVariationListing(
   //
   // Capped at 12: eBay allows 24, but a wall of near-identical card scans adds
   // nothing for the buyer, who picks from the dropdown anyway.
-  // Cover images lead, then card photos fill out the gallery. eBay uses the
-  // first image as the search thumbnail, so a supplied cover must come first —
-  // but it should add to the gallery rather than replace it, since buyers still
-  // want to see the actual cards.
+  // Item-level gallery.
+  //
+  // Deliberately minimal. eBay shows the item pictures AND the per-variation
+  // pictures in the same photo strip, so any card photo listed here appears
+  // twice — once as a gallery image, once as its variation's image. Filling the
+  // gallery with card photos produced a strip of visible duplicates.
+  //
+  // With a cover supplied the gallery is just that: one clean thumbnail, with
+  // every card shown through its own variation. Without one, eBay still demands
+  // at least one item picture, so a single card photo stands in — one repeat
+  // rather than twelve.
   const cardPhotos = opts.variations
     .map(v => v.photoUrl)
     .filter((u): u is string => !!u)
 
-  const galleryUrls = [...new Set([...opts.photoUrls, ...cardPhotos])].slice(0, 12)
+  const galleryUrls = opts.photoUrls.length > 0
+    ? opts.photoUrls
+    : cardPhotos.slice(0, 1)
 
   if (galleryUrls.length === 0) {
     throw new Error(

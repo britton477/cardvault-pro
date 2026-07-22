@@ -102,6 +102,88 @@ export function buildSetListingDescription(
   })
 }
 
+// ── Plain text → eBay HTML ────────────────────────────────────────────────────
+//
+// eBay renders descriptions as HTML, so a plain-text template arrives as one
+// unbroken paragraph — every newline collapses and the listing reads as a wall
+// of text.
+//
+// Rather than making the user write HTML in a textarea, the template stays
+// plain text and gains structure here. Styling matches buildListingDescription()
+// so single-card and set listings look like the same shop.
+//
+// Structure is inferred from how people naturally write:
+//   first line          → listing heading
+//   an ALL-CAPS line    → section heading, with a rule above it
+//   lines beginning "-" → bullet list
+//   anything else       → paragraph, with single newlines kept as line breaks
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** A heading is a line whose letters are all uppercase — "POSTAGE", "CONDITION". */
+function isHeading(line: string): boolean {
+  const letters = line.replace(/[^A-Za-zÀ-ÿ]/g, '')
+  return letters.length > 0 && letters === letters.toUpperCase() && line.length <= 70
+}
+
+const HR = '<hr style="border: none; border-top: 1px solid #ddd; margin: 14px 0;" />'
+
+export function plainTextToEbayHtml(text: string, shopName?: string): string {
+  const blocks = text.trim().split(/\n\s*\n/)
+  const out: string[] = []
+  let headingsSeen = 0
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean)
+    if (lines.length === 0) continue
+
+    const [first, ...rest] = lines
+
+    if (first && isHeading(first)) {
+      if (headingsSeen === 0) {
+        // Listing heading, plus the shop line beneath it
+        out.push(`<h2 style="font-size: 18px; margin: 0 0 4px;">${escapeHtml(first)}</h2>`)
+        if (shopName) {
+          out.push(`<p style="color: #555; margin: 0 0 12px;">${escapeHtml(shopName)} &mdash; UK Pok&eacute;mon Card Seller</p>`)
+        }
+      } else {
+        out.push(HR)
+        out.push(`<h3 style="font-size: 14px; margin: 0 0 6px;">${escapeHtml(first)}</h3>`)
+      }
+      headingsSeen++
+
+      if (rest.length > 0) out.push(renderBody(rest))
+      continue
+    }
+
+    out.push(renderBody(lines))
+  }
+
+  return `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #222; max-width: 680px;">
+${out.join('\n')}
+</div>`
+}
+
+/** Render non-heading lines: bullets become a list, everything else a paragraph. */
+function renderBody(lines: string[]): string {
+  const bullets = lines.filter(l => l.startsWith('-'))
+
+  if (bullets.length === lines.length) {
+    const items = lines
+      .map(l => `  <li>${escapeHtml(l.replace(/^-\s*/, ''))}</li>`)
+      .join('\n')
+    return `<ul style="margin: 0 0 10px; padding-left: 20px;">\n${items}\n</ul>`
+  }
+
+  // Single newlines inside a paragraph are intentional line breaks
+  return `<p style="margin: 0 0 10px;">${lines.map(escapeHtml).join('<br />')}</p>`
+}
+
 /**
  * Derive a readable group name from a set code, for the {SET} token.
  *
