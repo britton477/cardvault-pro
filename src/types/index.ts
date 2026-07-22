@@ -52,6 +52,8 @@ export interface OrgSettings {
   ebay_fulfillment_policy_id_high: string | null
   ebay_payment_policy_id:          string | null
   ebay_return_policy_id:           string | null
+  /** Reusable set-listing description. Null = use the built-in default. */
+  set_listing_template:            string | null
   updated_at:                      string
 }
 

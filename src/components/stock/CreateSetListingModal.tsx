@@ -14,8 +14,10 @@
 //   title     — "{SET_CODE} Pokémon Cards — Complete Your Set!" (editable)
 // =============================================================================
 import { useState, useEffect, useMemo } from 'react'
-import { X, ExternalLink, AlertTriangle, CheckCircle2, Layers, Loader2 } from 'lucide-react'
+import { X, ExternalLink, AlertTriangle, CheckCircle2, Layers, Loader2, RotateCcw } from 'lucide-react'
 import { cn, formatGBP } from '@/lib/utils'
+import { useOrgSettings } from '@/hooks/useSettings'
+import { buildSetListingDescription, setDisplayName } from '@/lib/listing-templates'
 import type { Card } from '@/types'
 
 type Phase = 'idle' | 'creating' | 'done'
@@ -42,6 +44,7 @@ function mode<T>(arr: T[]): T | undefined {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess }: Props) {
+  const { data: orgSettings } = useOrgSettings()
   const [phase,   setPhase]   = useState<Phase>('idle')
   const [listingUrl, setListingUrl] = useState<string | null>(null)
   const [error,   setError]   = useState<string | null>(null)
@@ -73,8 +76,24 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
         ? `${setCode} Pokémon Cards — Complete Your Set!`
         : 'Pokémon Cards — Complete Your Set!',
     )
-    setDescription('')
-  }, [open, selectedCards])
+    // Pre-fill from the saved template so every set listing reads consistently
+    // without retyping. Fully editable before submitting.
+    setDescription(buildSetListingDescription(orgSettings?.set_listing_template, {
+      setName:   setDisplayName(setCode),
+      condition: cond,
+      shopName:  orgSettings?.shop_name,
+    }))
+  }, [open, selectedCards, orgSettings])
+
+  /** Restore the description to the saved template, discarding local edits */
+  function resetDescription() {
+    const setCode = mode(selectedCards.map(c => c.set_code).filter(Boolean)) ?? ''
+    setDescription(buildSetListingDescription(orgSettings?.set_listing_template, {
+      setName:   setDisplayName(setCode),
+      condition,
+      shopName:  orgSettings?.shop_name,
+    }))
+  }
 
   if (!open) return null
 
@@ -238,18 +257,31 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
                 </select>
               </div>
 
-              {/* Description (optional) */}
+              {/* Description — pre-filled from the saved template */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Description <span className="text-muted-foreground/60">(optional)</span>
-                </label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Description
+                  </label>
+                  <button
+                    type="button"
+                    onClick={resetDescription}
+                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Reset to template
+                  </button>
+                </div>
                 <textarea
                   value={description}
                   onChange={e => setDescription(e.target.value)}
-                  rows={3}
+                  rows={10}
                   placeholder="Describe the listing, postage info, etc."
-                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground resize-none"
+                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground resize-y font-mono text-xs leading-relaxed"
                 />
+                <p className="text-[11px] text-muted-foreground">
+                  Edit the saved template in Settings → eBay to change the default.
+                </p>
               </div>
 
               {/* Card list preview */}

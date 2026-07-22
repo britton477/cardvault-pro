@@ -545,6 +545,11 @@ export interface VariationInput {
   displayName: string   // value shown to buyer (e.g. "Charizard" or "Charizard #006/198")
   price:       number
   quantity:    number
+  /**
+   * Photo of this specific card, shown when the buyer picks it from the
+   * dropdown. Optional — variations without one fall back to the gallery.
+   */
+  photoUrl?:   string
 }
 
 // ── Variation specific name discovery ─────────────────────────────────────────
@@ -691,9 +696,49 @@ export async function createVariationListing(
       </VariationSpecifics>
     </Variation>`).join('\n')
 
-  const pictures = opts.photoUrls
-    .map(u => `<PictureURL>${u}</PictureURL>`)
+  // ── Item-level gallery ────────────────────────────────────────────────────
+  //
+  // eBay requires at least one picture on every listing (21919136). For a set
+  // listing there is no single "the item", so the gallery is built from the
+  // variation photos themselves — the first few cards stand in for the listing.
+  //
+  // Capped at 12: eBay allows 24, but a wall of near-identical card scans adds
+  // nothing for the buyer, who picks from the dropdown anyway.
+  const galleryUrls = opts.photoUrls.length > 0
+    ? opts.photoUrls
+    : opts.variations.map(v => v.photoUrl).filter((u): u is string => !!u).slice(0, 12)
+
+  if (galleryUrls.length === 0) {
+    throw new Error(
+      'eBay requires at least one photo. None of the selected cards have an image — ' +
+      'add a photo to at least one card before creating a set listing.',
+    )
+  }
+
+  const pictures = galleryUrls
+    .map(u => `<PictureURL>${escapeXml(u)}</PictureURL>`)
     .join('\n      ')
+
+  // ── Per-variation pictures ────────────────────────────────────────────────
+  //
+  // Shows the buyer the actual card when they select it, rather than a generic
+  // gallery shot. This is the difference between a listing that reads as a real
+  // inventory of distinct cards and one that looks like a stock photo.
+  //
+  // Keyed on the same specific name used for the variations themselves — eBay
+  // rejects a mismatch.
+  const variationsWithPhotos = opts.variations.filter(v => v.photoUrl)
+
+  const variationPicturesXml = variationsWithPhotos.length > 0
+    ? `      <Pictures>
+        <VariationSpecificName>${escapeXml(specificName)}</VariationSpecificName>
+${variationsWithPhotos.map(v => `        <VariationSpecificPictureSet>
+          <VariationSpecificValue>${escapeXml(v.displayName)}</VariationSpecificValue>
+          <PictureURL>${escapeXml(v.photoUrl!)}</PictureURL>
+        </VariationSpecificPictureSet>`).join('\n')}
+      </Pictures>
+`
+    : ''
 
   const xml = `${buildXmlHeader('AddFixedPriceItem', token)}
   <Item>
@@ -711,7 +756,7 @@ export async function createVariationListing(
       <NameValueList><Name>Type</Name><Value>Individual Cards</Value></NameValueList>
     </ItemSpecifics>
     <Variations>
-      <VariationSpecificsSet>
+${variationPicturesXml}      <VariationSpecificsSet>
         <NameValueList>
           <Name>${escapeXml(specificName)}</Name>
 ${allNamesXml}
@@ -838,11 +883,25 @@ export async function addVariationsToListing(
       </VariationSpecifics>
     </Variation>`).join('\n')
 
+  // Carry each new card's photo across too, otherwise cards added later would
+  // show the gallery image while the originals show their own card.
+  const newWithPhotos = newVariations.filter(v => v.photoUrl)
+  const newPicturesXml = newWithPhotos.length > 0
+    ? `      <Pictures>
+        <VariationSpecificName>${escapeXml(specificName)}</VariationSpecificName>
+${newWithPhotos.map(v => `        <VariationSpecificPictureSet>
+          <VariationSpecificValue>${escapeXml(v.displayName)}</VariationSpecificValue>
+          <PictureURL>${escapeXml(v.photoUrl!)}</PictureURL>
+        </VariationSpecificPictureSet>`).join('\n')}
+      </Pictures>
+`
+    : ''
+
   const xml = `${buildXmlHeader('ReviseFixedPriceItem', token)}
   <Item>
     <ItemID>${ebayListingId}</ItemID>
     <Variations>
-      <VariationSpecificsSet>
+${newPicturesXml}      <VariationSpecificsSet>
         <NameValueList>
           <Name>${escapeXml(specificName)}</Name>
 ${mergedNamesXml}

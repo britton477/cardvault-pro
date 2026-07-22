@@ -197,6 +197,8 @@ export interface BulkWizardHook {
     strategy?:       PricingStrategy
     /** Title for the set listing, required when listing_mode is 'set' */
     set_title?:      string
+    /** Rendered description for the set listing */
+    set_description?: string
     /** Merge scans matching existing stock into that stock. Defaults true. */
     merge_restocks?: boolean
   }) => Promise<{
@@ -409,6 +411,8 @@ export function useBulkWizard(): BulkWizardHook {
     strategy?:       PricingStrategy
     /** Title for the set listing, required when listing_mode is 'set' */
     set_title?:      string
+    /** Rendered description for the set listing */
+    set_description?: string
     merge_restocks?: boolean
   }) => {
     setIsImporting(true)
@@ -524,7 +528,7 @@ export function useBulkWizard(): BulkWizardHook {
             body: JSON.stringify({
               card_ids:    result.new_card_ids,
               title:       opts.set_title ?? 'Pokémon Cards — Complete Your Set!',
-              description: '',
+              description: opts.set_description ?? '',
               set_code:    readyCards[0]?.overrides.set_code ?? readyCards[0]?.set_code ?? '',
               condition:   readyCards[0]?.overrides.condition ?? readyCards[0]?.condition ?? 'NM',
             }),

@@ -19,6 +19,7 @@ import { useOrgSettings } from '@/hooks/useSettings'
 import { Button }       from '@/components/ui/Button'
 import { cn, formatGBP } from '@/lib/utils'
 import { derivePrice, describeStrategy, type PricingStrategy } from '@/lib/pricing'
+import { buildSetListingDescription, setDisplayName } from '@/lib/listing-templates'
 import type { ListingMode } from '@/hooks/useBulkWizard'
 import type { BulkWizardCard } from '@/types'
 
@@ -42,10 +43,11 @@ interface ImportPanelProps {
   onImport:       (opts: {
     lot_id?:         string
     source?:         string
-    listing_mode?:   ListingMode
-    strategy?:       PricingStrategy
-    set_title?:      string
-    merge_restocks?: boolean
+    listing_mode?:    ListingMode
+    strategy?:        PricingStrategy
+    set_title?:       string
+    set_description?: string
+    merge_restocks?:  boolean
   }) => Promise<{
     created:            number
     restocked?:         number
@@ -81,6 +83,7 @@ export function ImportPanel({
   const [priceMode,   setPriceMode]   = useState<'market' | 'cost'>('market')
   const [adjustPct,   setAdjustPct]   = useState(0)
   const [setTitle,    setSetTitle]    = useState('')
+  const [setDescription, setSetDescription] = useState('')
   const [mergeRestocks, setMergeRestocks] = useState(true)
   const [restockPreview, setRestockPreview] = useState<RestockPreview[] | null>(null)
   const [imported,    setImported]    = useState<{
@@ -125,7 +128,15 @@ export function ImportPanel({
         ? `${dominantSet} Pokémon Cards — Complete Your Set!`
         : 'Pokémon Cards — Complete Your Set!')
     }
-  }, [listingMode, dominantSet, setTitle])
+    // Pre-fill the description from the saved template, same as the Stock page
+    if (listingMode === 'set' && !setDescription) {
+      setSetDescription(buildSetListingDescription(orgSettings?.set_listing_template, {
+        setName:   setDisplayName(dominantSet),
+        condition: readyCards[0]?.overrides.condition ?? readyCards[0]?.condition ?? 'NM',
+        shopName:  orgSettings?.shop_name,
+      }))
+    }
+  }, [listingMode, dominantSet, setTitle, setDescription, orgSettings, readyCards])
 
   // The single strategy object driving every price on this screen
   const strategy: PricingStrategy = priceMode === 'market'
@@ -206,7 +217,8 @@ export function ImportPanel({
         source:         source || 'Bulk Wizard',
         listing_mode:   listingMode,
         strategy,
-        set_title:      listingMode === 'set' ? setTitle.trim() : undefined,
+        set_title:       listingMode === 'set' ? setTitle.trim() : undefined,
+        set_description: listingMode === 'set' ? setDescription : undefined,
         merge_restocks: mergeRestocks,
       })
       setImported(result)
@@ -700,6 +712,23 @@ export function ImportPanel({
                 )}
               />
               <p className="text-[10px] text-muted-foreground text-right">{setTitle.length}/80</p>
+
+              <label className="block text-xs text-muted-foreground">
+                Description
+              </label>
+              <textarea
+                value={setDescription}
+                onChange={e => setSetDescription(e.target.value)}
+                rows={8}
+                className={cn(
+                  'w-full rounded-lg border border-border bg-secondary px-3 py-2',
+                  'text-xs font-mono leading-relaxed text-foreground resize-y',
+                  'focus:outline-none focus:ring-2 focus:ring-primary',
+                )}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Pre-filled from your saved template — edit it in Settings → eBay.
+              </p>
 
               {listableCount > 250 && (
                 <p className="text-xs text-amber-400/90">

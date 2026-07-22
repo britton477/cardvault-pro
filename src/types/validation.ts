@@ -392,6 +392,11 @@ export const OrgSettingsSchema = z.object({
   ebay_fulfillment_policy_id_high: z.string().max(50).nullish(),
   ebay_payment_policy_id:          z.string().max(50).nullish(),
   ebay_return_policy_id:           z.string().max(50).nullish(),
+  /**
+   * Description template reused across set listings. Supports {SET},
+   * {CONDITION} and {SHOP}. Null/empty falls back to the built-in default.
+   */
+  set_listing_template:            z.string().max(8000).nullish(),
 })
 
 export const EbayCredentialsSchema = z.object({

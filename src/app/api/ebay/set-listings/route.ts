@@ -75,9 +75,12 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Load requested cards ──────────────────────────────────────────────────
+    // Photos are joined here because eBay requires at least one image on the
+    // listing, and per-variation images let the buyer see the actual card they
+    // are selecting rather than a generic gallery shot.
     const { data: cards, error: cardsErr } = await supabase
       .from('cards')
-      .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id')
+      .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
       .in('id', input.card_ids)
       .eq('org_id', orgId)
       .is('deleted_at', null)
@@ -115,12 +118,32 @@ export async function POST(request: NextRequest) {
       cards as Array<{ id: string; card_name: string; card_number: string }>,
     )
 
+    /** Primary photo for a card — lowest position wins, full-size over thumbnail */
+    function primaryPhoto(card: Record<string, unknown>): string | undefined {
+      const photos = (card['photos'] as Array<{ url: string; thumb_url: string | null; position: number }> | null) ?? []
+      if (photos.length === 0) return undefined
+      const sorted = [...photos].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+      return sorted[0]?.url ?? sorted[0]?.thumb_url ?? undefined
+    }
+
     const variations: VariationInput[] = cards.map(c => ({
       sku:         c['id'] as string,
       displayName: displayNames.get(c['id'] as string) ?? (c['card_name'] as string),
       price:       c['listed_price'] as number,
       quantity:    c['qty'] as number,
+      photoUrl:    primaryPhoto(c as Record<string, unknown>),
     }))
+
+    // eBay rejects a listing with no images at all (21919136). Catch it here
+    // with a message naming the actual problem, rather than surfacing eBay's.
+    const withPhotos = variations.filter(v => v.photoUrl).length
+    if (withPhotos === 0) {
+      return badRequest(
+        'eBay requires at least one photo. None of these cards have an image yet — ' +
+        'add a photo to at least one before creating the set listing.',
+        'no_photos',
+      )
+    }
 
     // ── Create the eBay variation listing ─────────────────────────────────────
     const { ebayListingId, itemUrl } = await createVariationListing({
@@ -130,7 +153,9 @@ export async function POST(request: NextRequest) {
       condition:           input.condition,
       setCode:             input.set_code || undefined,
       variations,
-      photoUrls:           [],   // Sprint 4: wire up shared listing photo
+      // Empty: the gallery is derived from the variation photos themselves,
+      // since a set listing has no single representative item.
+      photoUrls:           [],
       location:            (settings['item_location'] as string | null) ?? 'United Kingdom',
       fulfillmentPolicyId,
       paymentPolicyId,

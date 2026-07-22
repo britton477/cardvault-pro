@@ -93,7 +93,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       // Load the new cards
       const { data: newCards } = await supabase
         .from('cards')
-        .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id')
+        .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
         .in('id', input.card_ids)
         .eq('org_id', orgId)
         .is('deleted_at', null)
@@ -141,12 +141,17 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
         displayNames.get(c.id) ?? c.card_name,
       )
 
-      const newVariations: VariationInput[] = newCards.map(c => ({
-        sku:         c['id'] as string,
-        displayName: displayNames.get(c['id'] as string) ?? (c['card_name'] as string),
-        price:       c['listed_price'] as number,
-        quantity:    c['qty'] as number,
-      }))
+      const newVariations: VariationInput[] = newCards.map(c => {
+        const photos = (c['photos'] as Array<{ url: string; thumb_url: string | null; position: number }> | null) ?? []
+        const sorted = [...photos].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+        return {
+          sku:         c['id'] as string,
+          displayName: displayNames.get(c['id'] as string) ?? (c['card_name'] as string),
+          price:       c['listed_price'] as number,
+          quantity:    c['qty'] as number,
+          photoUrl:    sorted[0]?.url ?? sorted[0]?.thumb_url ?? undefined,
+        }
+      })
 
       // Push to eBay
       await addVariationsToListing(orgId, ebayListingId, newVariations, existingNames)
