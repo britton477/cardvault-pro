@@ -156,7 +156,9 @@ export async function POST(request: NextRequest) {
           grader:              card.grader      as string | null,
           grade:               card.grade       as string | null,
           price:               listPrice,
-          quantity:            1,
+          // Bulk listing has no per-card prompt, so it advertises the full
+          // stock held. Listing 1 of 4 would leave three units invisible.
+          quantity:            Math.max(1, (card.qty as number | null) ?? 1),
           photoUrls,
           location:            (settings.item_location as string | null) ?? 'United Kingdom',
           fulfillmentPolicyId,

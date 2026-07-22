@@ -27,6 +27,8 @@ export interface RestockCandidate extends CardIdentity {
   status:              string
   is_graded:           boolean
   listing_type:        string | null
+  /** Single-card eBay listing, if this card has one */
+  ebay_listing_id:     string | null
   ebay_set_listing_id: string | null
 }
 

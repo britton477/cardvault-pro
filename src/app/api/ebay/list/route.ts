@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     }
 
     const results: EbayListingResult[] = await Promise.allSettled(
-      input.listings.map(async ({ card_id, list_price }) => {
+      input.listings.map(async ({ card_id, list_price, quantity }) => {
         // Load card with photos
         const { data: card } = await supabase
           .from('cards')
@@ -86,7 +86,12 @@ export async function POST(request: NextRequest) {
           grader:               card['grader'] as string | null,
           grade:                card['grade']  as string | null,
           price:                list_price,
-          quantity:             1,
+          // Advertise the stock actually held, not a hardcoded 1. Capped at the
+          // card's quantity so a listing can never promise more than exists.
+          quantity:             Math.max(1, Math.min(
+            quantity ?? (card['qty'] as number | null) ?? 1,
+            (card['qty'] as number | null) ?? 1,
+          )),
           photoUrls,
           location:             (settings['item_location'] as string | null) ?? 'United Kingdom',
           fulfillmentPolicyId,

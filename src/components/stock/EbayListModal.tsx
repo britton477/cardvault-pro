@@ -64,6 +64,7 @@ type Phase = 'price' | 'preview' | 'listing' | 'done' | 'error'
 export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'VaultHunters TCG' }: Props) {
   const [phase,       setPhase]       = useState<Phase>('price')
   const [priceInput,  setPriceInput]  = useState('')
+  const [qtyInput,    setQtyInput]    = useState('1')
   const [title,       setTitle]       = useState('')
   const [description, setDescription] = useState('')
   const [showDesc,    setShowDesc]    = useState(false)
@@ -82,6 +83,10 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
     // Pre-fill price from card's existing listed_price or market price
     const initPrice = card.listed_price ?? card.market_price ?? ''
     setPriceInput(initPrice ? String(initPrice) : '')
+
+    // Default to advertising everything held. Listing fewer is possible but
+    // rare, so it shouldn't be a decision the user makes every single time.
+    setQtyInput(String(Math.max(1, card.qty ?? 1)))
 
     // Generate title + description immediately so preview is ready
     const cardData = {
@@ -129,8 +134,12 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
   const priceValid  = price > 0
   const hasNoPhotos = Array.isArray(card.photos) && card.photos.length === 0
 
+  const stockQty = Math.max(1, card.qty ?? 1)
+  const qty      = Math.max(1, Math.min(parseInt(qtyInput, 10) || 1, stockQty))
+  const qtyValid = qty >= 1 && qty <= stockQty
+
   async function handleList() {
-    if (!priceValid) return
+    if (!priceValid || !qtyValid) return
     setPhase('listing')
     setErrorMsg(null)
 
@@ -138,7 +147,9 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
       const res = await fetch('/api/ebay/list', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ listings: [{ card_id: card!.id, list_price: price }] }),
+        body:    JSON.stringify({
+          listings: [{ card_id: card!.id, list_price: price, quantity: qty }],
+        }),
       })
 
       const json = await res.json() as { results?: Array<{ success: boolean; listing_id?: string; error?: string }> }
@@ -207,6 +218,40 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
                   />
                 </div>
               </div>
+
+              {/* Quantity — only worth showing when there's a choice to make */}
+              {stockQty > 1 && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Quantity to list</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max={stockQty}
+                      step="1"
+                      value={qtyInput}
+                      onChange={e => setQtyInput(e.target.value)}
+                      className="w-24 px-3 py-2.5 rounded-md border border-border bg-input text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      of {stockQty} in stock
+                    </span>
+                    {qty < stockQty && (
+                      <button
+                        type="button"
+                        onClick={() => setQtyInput(String(stockQty))}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        List all {stockQty}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    One listing showing {qty} available. eBay reduces it as they sell,
+                    and your stock follows.
+                  </p>
+                </div>
+              )}
 
               {/* Fee breakdown */}
               {priceValid && (
@@ -306,7 +351,7 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
                 </button>
                 <button
                   onClick={() => { void handleList() }}
-                  disabled={!priceValid}
+                  disabled={!priceValid || !qtyValid}
                   className={cn(
                     'flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                     priceValid

@@ -192,6 +192,15 @@ export const ListEventsSchema = z.object({
 export const EbayListingInputSchema = z.object({
   card_id:    uuid,
   list_price: price.min(0.01),
+  /**
+   * How many units to advertise. Omitted means "all of them" — the route reads
+   * the card's stock quantity.
+   *
+   * Listing fewer than you hold is allowed (keeping one back for a trade, say).
+   * No separate listed_qty column is needed: eBay's count and the card's stock
+   * only ever decrease together as sales come in, so the gap holds by itself.
+   */
+  quantity:   z.number().int().min(1).max(999).optional(),
 })
 
 export const EbayBulkListSchema = z.object({

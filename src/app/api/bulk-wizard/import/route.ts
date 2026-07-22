@@ -24,7 +24,7 @@ import { requireAuth, ok, forbidden, serverError, validationError } from '@/lib/
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
 import { writeAuditLog }   from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
-import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
+import { pushQuantitiesWithRecovery, pushSingleListingQuantity } from '@/lib/ebay-sync'
 import {
   buildRestockIndex, matchBatch, weightedAverageCost, needsStatusRevival, identityKey,
   type RestockCandidate,
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
       // rather than duplicated. Filtering them in SQL would hide them from that check.
       let existingQuery = db
         .from('cards')
-        .select('id, card_name, set_code, card_number, condition, foil_type, language, qty, purchase_price, status, is_graded, listing_type, ebay_set_listing_id')
+        .select('id, card_name, set_code, card_number, condition, foil_type, language, qty, purchase_price, status, is_graded, listing_type, ebay_listing_id, ebay_set_listing_id')
         .eq('org_id', orgId)
         .is('deleted_at', null)
 
@@ -280,22 +280,34 @@ export async function POST(request: NextRequest) {
     let ebayPushGroups = 0
 
     const bySetListing = new Map<string, Array<{ sku: string; quantity: number }>>()
+    // Single listings push individually — they have no group to batch into
+    const singlePushes: Array<{ listingId: string; quantity: number }> = []
+
     for (const detail of restockedDetails) {
       const row = restockAgg.get(detail.card_id)?.row
-      if (!row?.ebay_set_listing_id || row.listing_type !== 'variation') continue
+      if (!row) continue
 
-      const group = bySetListing.get(row.ebay_set_listing_id) ?? []
-      group.push({ sku: detail.card_id, quantity: detail.qty_after })
-      bySetListing.set(row.ebay_set_listing_id, group)
+      if (row.listing_type === 'variation' && row.ebay_set_listing_id) {
+        const group = bySetListing.get(row.ebay_set_listing_id) ?? []
+        group.push({ sku: detail.card_id, quantity: detail.qty_after })
+        bySetListing.set(row.ebay_set_listing_id, group)
+      } else if (row.ebay_listing_id) {
+        // Topping up a card that's already listed individually must raise the
+        // eBay count too, or the extra stock stays invisible to buyers.
+        singlePushes.push({ listingId: row.ebay_listing_id, quantity: detail.qty_after })
+      }
     }
 
-    ebayPushGroups = bySetListing.size
+    ebayPushGroups = bySetListing.size + singlePushes.length
 
-    if (bySetListing.size > 0) {
+    if (bySetListing.size > 0 || singlePushes.length > 0) {
       void (async () => {
         for (const [setListingId, updates] of bySetListing) {
           // Failures flag the listing sync_pending rather than disappearing
           await pushQuantitiesWithRecovery(orgId, setListingId, updates)
+        }
+        for (const { listingId, quantity } of singlePushes) {
+          await pushSingleListingQuantity(orgId, listingId, quantity)
         }
       })()
     }

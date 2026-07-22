@@ -10,7 +10,7 @@ import { requireAuth, ok, noContent, notFound, forbidden, serverError, validatio
 import { UpdateCardSchema } from '@/types/validation'
 import { writeAuditLog } from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
-import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
+import { pushQuantitiesWithRecovery, pushSingleListingQuantity } from '@/lib/ebay-sync'
 
 interface RouteParams { params: Promise<{ id: string }> }
 
@@ -49,7 +49,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // Verify ownership before update — also load variation fields for qty push
     const { data: existing } = await supabase
       .from('cards')
-      .select('id, org_id, qty, listing_type, ebay_set_listing_id')
+      .select('id, org_id, qty, listing_type, ebay_listing_id, ebay_set_listing_id')
       .eq('id', id)
       .eq('org_id', orgId)
       .is('deleted_at', null)
@@ -70,18 +70,23 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     // When qty changes on a card that's part of a multi-variation listing,
     // push the new quantity to eBay. Fire-and-forget so the card update never
     // blocks on eBay API latency.
-    if (
-      input.qty != null &&
-      input.qty !== (existing['qty'] as number) &&
-      existing['listing_type'] === 'variation' &&
-      existing['ebay_set_listing_id']
-    ) {
+    const qtyChanged = input.qty != null && input.qty !== (existing['qty'] as number)
+
+    if (qtyChanged && existing['listing_type'] === 'variation' && existing['ebay_set_listing_id']) {
       // A failed push flags the set listing sync_pending so the drift is visible
       // in the Set Listings tab instead of vanishing into the server log.
       void pushQuantitiesWithRecovery(
         orgId,
         existing['ebay_set_listing_id'] as string,
-        [{ sku: id, quantity: input.qty }],
+        [{ sku: id, quantity: input.qty! }],
+      )
+    } else if (qtyChanged && existing['ebay_listing_id']) {
+      // Single listing — keep eBay's available count in step with stock.
+      // Without this, restocking a card left eBay advertising the old number.
+      void pushSingleListingQuantity(
+        orgId,
+        existing['ebay_listing_id'] as string,
+        input.qty!,
       )
     }
 

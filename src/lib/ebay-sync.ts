@@ -24,6 +24,32 @@ export interface QuantityPush {
 }
 
 /**
+ * Push a single-card listing's quantity to eBay.
+ *
+ * Set listings already stay in step because every variation quantity change is
+ * pushed. Single listings had no equivalent, so restocking a card left eBay
+ * advertising the old number — you'd hold four and eBay would still say one.
+ *
+ * Never throws: the caller has already committed the stock change, and the DB
+ * is the source of truth. A failed push is recoverable by re-listing or
+ * adjusting on eBay directly.
+ */
+export async function pushSingleListingQuantity(
+  orgId:         string,
+  ebayListingId: string,
+  quantity:      number,
+): Promise<boolean> {
+  try {
+    const { reviseItemQuantity } = await import('@/lib/ebay')
+    await reviseItemQuantity(orgId, ebayListingId, Math.max(0, quantity))
+    return true
+  } catch (err) {
+    console.error(`[ebay-sync] single listing qty push failed for ${ebayListingId}:`, err)
+    return false
+  }
+}
+
+/**
  * Push variation quantities to eBay, recording failure state on the set listing.
  *
  * On success  — clears any previous failure and stamps last_synced_at.

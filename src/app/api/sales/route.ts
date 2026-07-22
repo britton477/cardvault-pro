@@ -10,7 +10,7 @@ import { CreateSaleSchema } from '@/types/validation'
 import { writeAuditLog } from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
-import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
+import { pushQuantitiesWithRecovery, pushSingleListingQuantity } from '@/lib/ebay-sync'
 import { z } from 'zod'
 
 const SaleQuerySchema = z.object({
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     if (input.card_id) {
       const { data: card } = await supabase
         .from('cards')
-        .select('purchase_price, org_id, qty, listing_type, ebay_set_listing_id')
+        .select('purchase_price, org_id, qty, listing_type, ebay_listing_id, ebay_set_listing_id')
         .eq('id', input.card_id)
         .eq('org_id', orgId)
         .single()
@@ -158,6 +158,14 @@ export async function POST(request: NextRequest) {
             orgId,
             card['ebay_set_listing_id'] as string,
             [{ sku: input.card_id, quantity: qtyAfter }],
+          )
+        } else if (card['ebay_listing_id']) {
+          // Single listing — a sale off eBay (face to face, Facebook) must still
+          // reduce what eBay advertises, or the next buyer oversells you.
+          void pushSingleListingQuantity(
+            orgId,
+            card['ebay_listing_id'] as string,
+            qtyAfter,
           )
         }
       }

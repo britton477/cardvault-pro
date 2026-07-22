@@ -498,6 +498,30 @@ export async function reviseItem(
   await callTradingApi('ReviseItem', xml, token, creds.appId)
 }
 
+/**
+ * Revise the available quantity on a single-card fixed-price listing.
+ *
+ * Setting quantity to 0 ends the listing on eBay's side, which is the correct
+ * outcome when stock runs out.
+ */
+export async function reviseItemQuantity(
+  orgId: string,
+  listingId: string,
+  quantity: number,
+): Promise<void> {
+  const creds = await getCredentials(orgId)
+  const token = await getValidAccessToken(orgId)
+
+  const xml = `${buildXmlHeader('ReviseFixedPriceItem', token)}
+  <Item>
+    <ItemID>${listingId}</ItemID>
+    <Quantity>${Math.max(0, Math.floor(quantity))}</Quantity>
+  </Item>
+</ReviseFixedPriceItemRequest>`
+
+  await callTradingApi('ReviseFixedPriceItem', xml, token, creds.appId)
+}
+
 // ── End a listing ─────────────────────────────────────────────────────────────
 
 export async function endItem(

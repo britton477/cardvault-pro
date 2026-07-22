@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     // route's query exactly or the preview would show a different outcome.
     let query = supabase
       .from('cards')
-      .select('id, card_name, set_code, card_number, condition, foil_type, language, qty, purchase_price, status, is_graded, listing_type, ebay_set_listing_id')
+      .select('id, card_name, set_code, card_number, condition, foil_type, language, qty, purchase_price, status, is_graded, listing_type, ebay_listing_id, ebay_set_listing_id')
       .eq('org_id', orgId)
       .is('deleted_at', null)
 
