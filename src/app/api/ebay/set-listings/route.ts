@@ -17,6 +17,7 @@ import {
 } from '@/lib/api'
 import {
   createVariationListing,
+  buildUniqueDisplayNames,
   EBAY_MAX_VARIATIONS,
   EBAY_IS_SANDBOX,
   type VariationInput,
@@ -25,22 +26,9 @@ import { writeAuditLog } from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
 import { CreateSetListingSchema } from '@/types/validation'
 
-// ── Helper: build a unique display name for each card variation ───────────────
-// If multiple cards share the same card_name, append the card number so buyers
-// can tell them apart. e.g. "Ralts" vs "Ralts #067/091"
-function buildDisplayNames(
-  cards: Array<{ id: string; card_name: string; card_number: string }>,
-): Map<string, string> {
-  const nameCount = new Map<string, number>()
-  for (const c of cards) nameCount.set(c.card_name, (nameCount.get(c.card_name) ?? 0) + 1)
-
-  const result = new Map<string, string>()
-  for (const c of cards) {
-    const dupName = (nameCount.get(c.card_name) ?? 0) > 1
-    result.set(c.id, dupName && c.card_number ? `${c.card_name} #${c.card_number}` : c.card_name)
-  }
-  return result
-}
+// Display names come from buildUniqueDisplayNames() in lib/ebay.ts — shared
+// with the add-cards route so both produce identical labels, and guaranteed
+// unique because eBay rejects repeated variation values outright.
 
 export async function POST(request: NextRequest) {
   try {
@@ -80,7 +68,7 @@ export async function POST(request: NextRequest) {
     // are selecting rather than a generic gallery shot.
     const { data: cards, error: cardsErr } = await supabase
       .from('cards')
-      .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
+      .select('id, card_name, card_number, foil_type, condition, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
       .in('id', input.card_ids)
       .eq('org_id', orgId)
       .is('deleted_at', null)
@@ -114,8 +102,11 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Build variation display names (deduplicates by appending card number) ─
-    const displayNames = buildDisplayNames(
-      cards as Array<{ id: string; card_name: string; card_number: string }>,
+    const displayNames = buildUniqueDisplayNames(
+      cards as unknown as Array<{
+        id: string; card_name: string; card_number?: string | null
+        foil_type?: string | null; condition?: string | null
+      }>,
     )
 
     /** Primary photo for a card — lowest position wins, full-size over thumbnail */
@@ -134,13 +125,13 @@ export async function POST(request: NextRequest) {
       photoUrl:    primaryPhoto(c as Record<string, unknown>),
     }))
 
-    // eBay rejects a listing with no images at all (21919136). Catch it here
-    // with a message naming the actual problem, rather than surfacing eBay's.
+    // eBay rejects a listing with no images at all (21919136). A cover image
+    // satisfies that on its own, so this only fires when there is nothing at all.
     const withPhotos = variations.filter(v => v.photoUrl).length
-    if (withPhotos === 0) {
+    if (withPhotos === 0 && !input.cover_image_url) {
       return badRequest(
         'eBay requires at least one photo. None of these cards have an image yet — ' +
-        'add a photo to at least one before creating the set listing.',
+        'add a cover image, or a photo to at least one card.',
         'no_photos',
       )
     }
@@ -153,9 +144,9 @@ export async function POST(request: NextRequest) {
       condition:           input.condition,
       setCode:             input.set_code || undefined,
       variations,
-      // Empty: the gallery is derived from the variation photos themselves,
-      // since a set listing has no single representative item.
-      photoUrls:           [],
+      // A cover image leads the gallery when supplied. Without one the gallery
+      // falls back to the variation card photos inside createVariationListing.
+      photoUrls:           input.cover_image_url ? [input.cover_image_url] : [],
       location:            (settings['item_location'] as string | null) ?? 'United Kingdom',
       fulfillmentPolicyId,
       paymentPolicyId,

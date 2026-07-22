@@ -26,7 +26,7 @@ import { writeAuditLog }   from '@/lib/audit'
 import { invalidateCache } from '@/lib/cache'
 import { pushQuantitiesWithRecovery } from '@/lib/ebay-sync'
 import {
-  buildRestockIndex, matchBatch, weightedAverageCost, needsStatusRevival,
+  buildRestockIndex, matchBatch, weightedAverageCost, needsStatusRevival, identityKey,
   type RestockCandidate,
 } from '@/lib/restock'
 
@@ -110,11 +110,18 @@ export async function POST(request: NextRequest) {
     const newIndices     = matches.filter(m => !m.existing).map(m => m.inputIndex)
     const restockMatches = matches.filter(m => m.existing) as Array<{ inputIndex: number; existing: RestockCandidate }>
 
-    // ── Plan card-limit check — NEW rows only ────────────────────────────────
-    // Restocks add units to rows that already exist and already count against
-    // the limit, so charging them again would block legitimate restocking.
+    // ── Plan card-limit check — NEW ROWS only ────────────────────────────────
+    //
+    // Counts DISTINCT new cards, not scans. Restocks add units to rows that
+    // already count against the limit, and identical scans collapse into one
+    // row — charging per scan would block legitimate imports. Scanning eight
+    // copies of one card consumes one slot, not eight.
+    const distinctNewCount = new Set(
+      newIndices.map(i => identityKey(input.cards[i]!)),
+    ).size
+
     const cardLimit = user.org?.card_limit ?? 100
-    if (cardLimit > 0 && newIndices.length > 0) {
+    if (cardLimit > 0 && distinctNewCount > 0) {
       const { count: currentCount } = await db
         .from('cards')
         .select('id', { count: 'exact', head: true })
@@ -122,7 +129,7 @@ export async function POST(request: NextRequest) {
         .is('deleted_at', null)
 
       const current = currentCount ?? 0
-      if (current + newIndices.length > cardLimit) {
+      if (current + distinctNewCount > cardLimit) {
         const remaining = Math.max(0, cardLimit - current)
         return forbidden(
           remaining === 0
@@ -182,8 +189,28 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // ── Build insert rows for genuinely new cards ────────────────────────────
-    const rows = newIndices.map(i => input.cards[i]!).map(card => ({
+    // ── Collapse identical scans within this batch ───────────────────────────
+    //
+    // Restock matching compares each scan against EXISTING stock. It says
+    // nothing about two scans in the same batch matching each other, so five
+    // copies of a card you've never held before used to insert five rows at
+    // qty 1 rather than one row at qty 5.
+    //
+    // That fragmented inventory and, because eBay requires variation values to
+    // be unique, made those cards impossible to put in a set listing at all.
+    const newGroups = new Map<string, { indices: number[]; card: typeof input.cards[number] }>()
+    for (const i of newIndices) {
+      const card = input.cards[i]!
+      const key  = identityKey(card)
+      const g    = newGroups.get(key)
+      if (g) g.indices.push(i)
+      else   newGroups.set(key, { indices: [i], card })
+    }
+
+    // ── Build insert rows — one per distinct card, qty = copies scanned ───────
+    const groupList = [...newGroups.values()]
+
+    const rows = groupList.map(({ indices, card }) => ({
       org_id:         orgId,
       added_by:       user.id,
       card_name:      card.card_name,
@@ -192,9 +219,13 @@ export async function POST(request: NextRequest) {
       condition:      card.condition,
       foil_type:      card.foil_type,
       language:       card.language,
-      qty:            1,
+      qty:            indices.length,
       status:         'In Stock' as const,
-      purchase_price: card.purchase_price,
+      // Proportional costs can differ slightly between copies, so average them
+      // across the group rather than taking the first arbitrarily.
+      purchase_price: Math.round(
+        (indices.reduce((s, i) => s + (input.cards[i]!.purchase_price ?? 0), 0) / indices.length) * 100,
+      ) / 100,
       purchase_date:  now.split('T')[0],
       ebay_avg_sold:  card.ebay_avg_sold,
       price_source:   card.ebay_avg_sold ? 'ebay' : null,
@@ -221,14 +252,22 @@ export async function POST(request: NextRequest) {
     }
 
     // ── card_ids in ORIGINAL INPUT ORDER ─────────────────────────────────────
-    // The client maps scanned photos to card IDs positionally. Returning a
-    // reordered or short array would attach photos to the wrong cards.
-    const card_ids: string[] = new Array<string>(input.cards.length)
-    let newIdCursor = 0
+    //
+    // The client maps scanned photos to card IDs positionally, so this array
+    // must stay the same length and order as the input.
+    //
+    // Several input indices can now share one card id, because identical scans
+    // collapse into a single row. A positional cursor would drift as soon as
+    // that happened — the group's index list is the authority instead.
+    const card_ids: string[] = new Array<string>(input.cards.length).fill('')
+
+    groupList.forEach((group, groupIdx) => {
+      const newId = newCardIds[groupIdx] ?? ''
+      for (const inputIndex of group.indices) card_ids[inputIndex] = newId
+    })
+
     for (const { inputIndex, existing } of matches) {
-      card_ids[inputIndex] = existing
-        ? existing.id
-        : (newCardIds[newIdCursor++] ?? '')
+      if (existing) card_ids[inputIndex] = existing.id
     }
 
     // ── Push restocked quantities to eBay, batched per set listing ───────────

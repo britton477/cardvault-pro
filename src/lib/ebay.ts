@@ -540,6 +540,83 @@ export async function endItem(
  */
 export const EBAY_MAX_VARIATIONS = 250
 
+/**
+ * Build display names for a set of cards, guaranteed unique.
+ *
+ * eBay rejects a listing whose variation values repeat (21916692), which is
+ * fatal rather than cosmetic — one collision kills the whole listing. Two rows
+ * of the same card in the same condition should really have been merged into
+ * one row with a higher quantity, but a listing must not break because they
+ * weren't.
+ *
+ * Disambiguation escalates only as far as needed, so the common case stays
+ * clean for the buyer:
+ *
+ *   Charizard                     — name alone is unique
+ *   Charizard #006/198            — another Charizard exists
+ *   Charizard #006/198 (Holo)     — same number, different finish
+ *   Charizard #006/198 (Holo) 2   — genuinely identical rows
+ */
+export function buildUniqueDisplayNames(
+  cards: Array<{
+    id:           string
+    card_name:    string
+    card_number?: string | null
+    foil_type?:   string | null
+    condition?:   string | null
+  }>,
+): Map<string, string> {
+  // 1. Card number is only added when the name alone is ambiguous
+  const nameCount = new Map<string, number>()
+  for (const c of cards) nameCount.set(c.card_name, (nameCount.get(c.card_name) ?? 0) + 1)
+
+  const baseName = (c: typeof cards[number]) =>
+    (nameCount.get(c.card_name) ?? 0) > 1 && c.card_number
+      ? `${c.card_name} #${c.card_number}`
+      : c.card_name
+
+  // 2. Group by base name, then decide whether finish actually distinguishes.
+  //
+  // Tagging only one of three identical Holos as "(Holo)" would imply the other
+  // two are something else. Finish is added to ALL cards in a group, or none —
+  // and only when the group genuinely contains more than one finish.
+  const groups = new Map<string, typeof cards>()
+  for (const c of cards) {
+    const key = baseName(c)
+    const g   = groups.get(key)
+    if (g) g.push(c)
+    else   groups.set(key, [c])
+  }
+
+  const result = new Map<string, string>()
+  const used   = new Set<string>()
+
+  for (const [base, group] of groups) {
+    const finishes    = new Set(group.map(c => c.foil_type ?? 'Normal'))
+    const useFinish   = group.length > 1 && finishes.size > 1
+
+    for (const c of group) {
+      let name = useFinish
+        ? `${base} (${c.foil_type ?? 'Normal'})`
+        : base
+
+      // Last resort: a counter. Reached only when rows are genuinely identical
+      // in every respect, which means they should have been one row with a
+      // higher quantity all along.
+      if (used.has(name)) {
+        let n = 2
+        while (used.has(`${name} ${n}`)) n++
+        name = `${name} ${n}`
+      }
+
+      used.add(name)
+      result.set(c.id, name)
+    }
+  }
+
+  return result
+}
+
 export interface VariationInput {
   sku:         string   // card.id — stored as eBay SKU for all future updates
   displayName: string   // value shown to buyer (e.g. "Charizard" or "Charizard #006/198")
@@ -704,9 +781,15 @@ export async function createVariationListing(
   //
   // Capped at 12: eBay allows 24, but a wall of near-identical card scans adds
   // nothing for the buyer, who picks from the dropdown anyway.
-  const galleryUrls = opts.photoUrls.length > 0
-    ? opts.photoUrls
-    : opts.variations.map(v => v.photoUrl).filter((u): u is string => !!u).slice(0, 12)
+  // Cover images lead, then card photos fill out the gallery. eBay uses the
+  // first image as the search thumbnail, so a supplied cover must come first —
+  // but it should add to the gallery rather than replace it, since buyers still
+  // want to see the actual cards.
+  const cardPhotos = opts.variations
+    .map(v => v.photoUrl)
+    .filter((u): u is string => !!u)
+
+  const galleryUrls = [...new Set([...opts.photoUrls, ...cardPhotos])].slice(0, 12)
 
   if (galleryUrls.length === 0) {
     throw new Error(

@@ -14,7 +14,7 @@
 //   title     — "{SET_CODE} Pokémon Cards — Complete Your Set!" (editable)
 // =============================================================================
 import { useState, useEffect, useMemo } from 'react'
-import { X, ExternalLink, AlertTriangle, CheckCircle2, Layers, Loader2, RotateCcw } from 'lucide-react'
+import { X, ExternalLink, AlertTriangle, CheckCircle2, Layers, Loader2, RotateCcw, ImagePlus } from 'lucide-react'
 import { cn, formatGBP } from '@/lib/utils'
 import { useOrgSettings } from '@/hooks/useSettings'
 import { buildSetListingDescription, setDisplayName } from '@/lib/listing-templates'
@@ -58,6 +58,8 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
   }, [selectedCards])
 
   // Form state
+  const [coverUrl,      setCoverUrl]      = useState<string | null>(null)
+  const [coverUploading, setCoverUploading] = useState(false)
   const [title,     setTitle]     = useState('')
   const [description, setDescription] = useState('')
   const [condition, setCondition] = useState<string>('')
@@ -68,6 +70,7 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
     setPhase('idle')
     setError(null)
     setListingUrl(null)
+    setCoverUrl(null)
     const setCode = mode(selectedCards.map(c => c.set_code).filter(Boolean)) ?? ''
     const cond    = mode(selectedCards.map(c => c.condition)) ?? 'NM'
     setCondition(cond)
@@ -84,6 +87,24 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
       shopName:  orgSettings?.shop_name,
     }))
   }, [open, selectedCards, orgSettings])
+
+  /** Upload a cover image — leads the eBay gallery and becomes the search thumbnail */
+  async function handleCoverUpload(file: File) {
+    setCoverUploading(true)
+    setError(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/images/listing-cover', { method: 'POST', body: fd })
+      const json = await res.json() as { url?: string; error?: string }
+      if (!res.ok || !json.url) throw new Error(json.error ?? 'Upload failed')
+      setCoverUrl(json.url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Cover upload failed')
+    } finally {
+      setCoverUploading(false)
+    }
+  }
 
   /** Restore the description to the saved template, discarding local edits */
   function resetDescription() {
@@ -118,6 +139,7 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
           description: description.trim(),
           set_code:    autoSetCode,
           condition,
+          ...(coverUrl ? { cover_image_url: coverUrl } : {}),
         }),
       })
 
@@ -224,6 +246,61 @@ export function CreateSetListingModal({ open, onClose, selectedCards, onSuccess 
                   {error}
                 </div>
               )}
+
+              {/* Cover image — first in the gallery, and the search thumbnail */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Cover image <span className="text-muted-foreground/60">(optional)</span>
+                </label>
+
+                {coverUrl ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/40 p-2">
+                    <img
+                      src={coverUrl}
+                      alt="Listing cover"
+                      className="h-20 w-20 rounded object-cover shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium">Cover set</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Shown first in the gallery and used as the search thumbnail.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCoverUrl(null)}
+                      className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                      aria-label="Remove cover image"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className={cn(
+                    'flex items-center justify-center gap-2 rounded-lg border border-dashed border-border',
+                    'px-3 py-4 text-xs text-muted-foreground cursor-pointer transition-colors',
+                    'hover:border-primary/40 hover:text-foreground hover:bg-secondary/40',
+                    coverUploading && 'opacity-60 pointer-events-none',
+                  )}>
+                    {coverUploading
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploading…</>
+                      : <><ImagePlus className="h-3.5 w-3.5" /> Upload a cover image</>}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={e => {
+                        const f = e.target.files?.[0]
+                        if (f) void handleCoverUpload(f)
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Without one, the gallery is built from your card photos.
+                </p>
+              </div>
 
               {/* Title */}
               <div className="space-y-1.5">

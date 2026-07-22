@@ -339,6 +339,11 @@ export const CreateSetListingSchema = z.object({
   fulfillment_policy_id: z.string().max(50).optional(),
   payment_policy_id:     z.string().max(50).optional(),
   return_policy_id:      z.string().max(50).optional(),
+  /**
+   * Optional cover image URL, shown first in the eBay gallery. When absent the
+   * gallery falls back to the variation card photos.
+   */
+  cover_image_url:       z.string().url().max(500).optional(),
 })
 
 export const AddCardsToSetListingSchema = z.object({

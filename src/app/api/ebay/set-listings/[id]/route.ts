@@ -21,6 +21,7 @@ import {
   addVariationsToListing,
   syncVariationQuantities,
   endItem,
+  buildUniqueDisplayNames,
   EBAY_MAX_VARIATIONS,
   EBAY_IS_SANDBOX,
   type VariationInput,
@@ -31,20 +32,9 @@ import { SetListingActionSchema } from '@/types/validation'
 
 interface Ctx { params: Promise<{ id: string }> }
 
-// ── Helper: build display names (deduplicates card names within a set) ────────
-function buildDisplayNames(
-  cards: Array<{ id: string; card_name: string; card_number: string }>,
-): Map<string, string> {
-  const nameCount = new Map<string, number>()
-  for (const c of cards) nameCount.set(c.card_name, (nameCount.get(c.card_name) ?? 0) + 1)
-
-  const result = new Map<string, string>()
-  for (const c of cards) {
-    const isDup = (nameCount.get(c.card_name) ?? 0) > 1
-    result.set(c.id, isDup && c.card_number ? `${c.card_name} #${c.card_number}` : c.card_name)
-  }
-  return result
-}
+// Display names come from buildUniqueDisplayNames() in lib/ebay.ts, shared with
+// the create route so a card added later gets the same label it would have had
+// at creation.
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
   try {
@@ -93,7 +83,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       // Load the new cards
       const { data: newCards } = await supabase
         .from('cards')
-        .select('id, card_name, card_number, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
+        .select('id, card_name, card_number, foil_type, condition, listed_price, qty, ebay_set_listing_id, photos:card_photos(url, thumb_url, position)')
         .in('id', input.card_ids)
         .eq('org_id', orgId)
         .is('deleted_at', null)
@@ -131,11 +121,21 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       }
 
       // Build display names across all cards (existing + new) to detect collisions
+      // Names are computed across existing + new together, so a new card can be
+      // disambiguated against one already in the listing.
       const allCards = [
-        ...existingCards.map(c => ({ id: c.id, card_name: c.card_name, card_number: c.card_number })),
-        ...newCards.map(c => ({ id: c['id'] as string, card_name: c['card_name'] as string, card_number: c['card_number'] as string })),
+        ...existingCards.map(c => ({
+          id: c.id, card_name: c.card_name, card_number: c.card_number,
+          foil_type: (c as { foil_type?: string | null }).foil_type ?? null,
+        })),
+        ...newCards.map(c => ({
+          id:          c['id']          as string,
+          card_name:   c['card_name']   as string,
+          card_number: c['card_number'] as string,
+          foil_type:   c['foil_type']   as string | null,
+        })),
       ]
-      const displayNames = buildDisplayNames(allCards)
+      const displayNames = buildUniqueDisplayNames(allCards)
 
       const existingNames = existingCards.map(c =>
         displayNames.get(c.id) ?? c.card_name,
