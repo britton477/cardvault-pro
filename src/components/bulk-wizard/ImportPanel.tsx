@@ -13,10 +13,13 @@
 // =============================================================================
 import { useState, useEffect } from 'react'
 import { useRouter }    from 'next/navigation'
-import { CheckCircle2, Package, TrendingUp, Layers, AlertCircle, Tag, PackagePlus } from 'lucide-react'
+import { CheckCircle2, Package, TrendingUp, Layers, AlertCircle, Tag, PackagePlus, ExternalLink, Boxes } from 'lucide-react'
 import { useLots }      from '@/hooks/useLots'
+import { useOrgSettings } from '@/hooks/useSettings'
 import { Button }       from '@/components/ui/Button'
 import { cn, formatGBP } from '@/lib/utils'
+import { derivePrice, describeStrategy, type PricingStrategy } from '@/lib/pricing'
+import type { ListingMode } from '@/hooks/useBulkWizard'
 import type { BulkWizardCard } from '@/types'
 
 interface RestockPreview {
@@ -39,14 +42,18 @@ interface ImportPanelProps {
   onImport:       (opts: {
     lot_id?:         string
     source?:         string
-    list_on_ebay?:   boolean
-    markup_pct?:     number
+    listing_mode?:   ListingMode
+    strategy?:       PricingStrategy
+    set_title?:      string
     merge_restocks?: boolean
   }) => Promise<{
     created:            number
     restocked?:         number
     restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
     ebay_pushed?:       number
+    listing_mode?:      ListingMode
+    set_listing_url?:   string | null
+    set_listing_error?: string | null
     ebay_listed?:       number
     ebay_failed?:       number
     ebay_failed_ids?:   string[]
@@ -68,8 +75,12 @@ export function ImportPanel({
   const { data: lotsData } = useLots()
   const [lotId,       setLotId]       = useState('')
   const [source,      setSource]      = useState('Bulk Wizard')
-  const [listOnEbay,  setListOnEbay]  = useState(false)
-  const [markupPct,   setMarkupPct]   = useState(10)
+  const { data: orgSettings } = useOrgSettings()
+
+  const [listingMode, setListingMode] = useState<ListingMode>('none')
+  const [priceMode,   setPriceMode]   = useState<'market' | 'cost'>('market')
+  const [adjustPct,   setAdjustPct]   = useState(0)
+  const [setTitle,    setSetTitle]    = useState('')
   const [mergeRestocks, setMergeRestocks] = useState(true)
   const [restockPreview, setRestockPreview] = useState<RestockPreview[] | null>(null)
   const [imported,    setImported]    = useState<{
@@ -77,6 +88,9 @@ export function ImportPanel({
     restocked?:         number
     restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
     ebay_pushed?:       number
+    listing_mode?:      ListingMode
+    set_listing_url?:   string | null
+    set_listing_error?: string | null
     ebay_listed?:       number
     ebay_failed?:       number
     ebay_failed_ids?:   string[]
@@ -89,18 +103,54 @@ export function ImportPanel({
   const totalProfit  = readyCards.reduce((s, c) => s + (c.profit_potential ?? 0), 0)
   const lots         = lotsData?.data ?? []
 
-  // Cards that can be listed: have a manually set list price OR eBay avg to derive one from
-  const listableCards   = readyCards.filter(c =>
-    c.listed_price !== null || ((c.ebay_avg_sold ?? 0) > 0)
-  )
-  const listableCount   = listableCards.length
-  const unlistableCount = readyCards.length - listableCount
+  // The org's configured markup is the fallback when a card has no eBay
+  // comparables. Previously this setting existed but was read by nothing.
+  const orgMarkup = orgSettings?.markup_pct ?? 40
 
-  // Effective list price for a card: manual override > markup calculation
+  // Seed a sensible set-listing title once the dominant set code is known
+  const dominantSet = (() => {
+    const counts = new Map<string, number>()
+    for (const c of readyCards) {
+      const code = c.overrides.set_code ?? c.set_code
+      if (code) counts.set(code, (counts.get(code) ?? 0) + 1)
+    }
+    let best = ''; let max = 0
+    for (const [code, n] of counts) if (n > max) { max = n; best = code }
+    return best
+  })()
+
+  useEffect(() => {
+    if (listingMode === 'set' && !setTitle) {
+      setSetTitle(dominantSet
+        ? `${dominantSet} Pokémon Cards — Complete Your Set!`
+        : 'Pokémon Cards — Complete Your Set!')
+    }
+  }, [listingMode, dominantSet, setTitle])
+
+  // The single strategy object driving every price on this screen
+  const strategy: PricingStrategy = priceMode === 'market'
+    ? { mode: 'market', adjustmentPct: adjustPct }
+    : { mode: 'cost',   markupPct:     adjustPct }
+
+  /**
+   * Price preview — uses the exact same function the import will use, so what
+   * is shown here is what gets written. No parallel implementation.
+   */
   function effectiveListPrice(c: BulkWizardCard): number {
     if (c.listed_price !== null) return c.listed_price
-    return Math.round((c.ebay_avg_sold ?? 0) * (1 + markupPct / 100) * 100) / 100
+    return derivePrice(
+      { purchase_price: c.proportional_cost ?? 0, ebay_avg_sold: c.ebay_avg_sold },
+      strategy,
+      orgMarkup,
+    ).price ?? 0
   }
+
+  // Every card that can be given a price. With the market strategy falling back
+  // to cost-plus, this is now effectively everything with either a cost or a
+  // market value — which is why cards no longer land unpriced.
+  const listableCards = readyCards.filter(c => effectiveListPrice(c) > 0)
+  const listableCount   = listableCards.length
+  const unlistableCount = readyCards.length - listableCount
 
   // Estimated total list value
   const totalListValue = listableCards.reduce((s, c) => s + effectiveListPrice(c), 0)
@@ -154,8 +204,9 @@ export function ImportPanel({
       const result = await onImport({
         lot_id:         lotId || undefined,
         source:         source || 'Bulk Wizard',
-        list_on_ebay:   listOnEbay || undefined,
-        markup_pct:     listOnEbay ? markupPct : undefined,
+        listing_mode:   listingMode,
+        strategy,
+        set_title:      listingMode === 'set' ? setTitle.trim() : undefined,
         merge_restocks: mergeRestocks,
       })
       setImported(result)
@@ -222,22 +273,45 @@ export function ImportPanel({
               )}
             </p>
           )}
-          {ebayListed > 0 && (
+          {imported.listing_mode === 'set' && imported.set_listing_url && (
+            <p className="text-sm text-teal-400 mt-1">
+              {ebayListed} card{ebayListed !== 1 ? 's' : ''} published as one set listing
+            </p>
+          )}
+          {imported.listing_mode === 'set' && imported.set_listing_error && (
+            <p className="text-sm text-amber-400 mt-1">
+              Cards imported, but the set listing failed: {imported.set_listing_error}
+            </p>
+          )}
+          {imported.listing_mode === 'individual' && ebayListed > 0 && (
             <p className="text-sm text-green-400 mt-1">
               {ebayListed} listing{ebayListed !== 1 ? 's' : ''} published on eBay
             </p>
           )}
-          {listOnEbay && ebayListed === 0 && ebayFailed === 0 && failedIds.length === 0 && (
+          {imported.listing_mode === 'individual' && ebayListed === 0 && ebayFailed === 0 && failedIds.length === 0 && (
             <p className="text-sm text-amber-400 mt-1">
               eBay listing skipped — check eBay is connected in Settings
             </p>
           )}
-          {!listOnEbay && (
+          {imported.listing_mode === 'none' && (
             <p className="text-sm text-muted-foreground mt-1">
-              All cards are now in your inventory with proportional costs recorded.
+              All cards are in your inventory, priced and ready to list whenever you want.
             </p>
           )}
         </div>
+
+        {/* Direct link to the new set listing */}
+        {imported.set_listing_url && (
+          <a
+            href={imported.set_listing_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-md bg-teal-500/15 border border-teal-500/30 text-teal-400 px-4 py-2 text-sm font-medium hover:bg-teal-500/25 transition-colors"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View set listing on eBay
+          </a>
+        )}
 
         {/* ── Failed eBay listings retry block ─────────────────────── */}
         {failedIds.length > 0 && (
@@ -450,76 +524,79 @@ export function ImportPanel({
           />
         </div>
 
-        {/* ── List on eBay toggle ───────────────────────────────────── */}
-        <div className={cn(
-          'px-4 py-3.5 transition-colors',
-          listOnEbay ? 'bg-blue-500/5' : '',
-        )}>
-          <div className="flex items-center justify-between">
+        {/* ── Pricing — always applied, independent of listing ──────── */}
+        <div className="px-4 py-3.5">
+          <div className="flex items-center justify-between gap-3 mb-3">
             <div>
               <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
                 <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-                List on eBay after import
+                Asking price
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {listOnEbay
-                  ? `Will list ${listableCount} card${listableCount !== 1 ? 's' : ''} with a price set${unlistableCount > 0 ? ` · ${unlistableCount} without eBay data skipped` : ''}`
-                  : 'Import to stock only — list manually later'}
+                {describeStrategy(strategy)} · applied whether or not you list now
               </p>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={listOnEbay}
-              onClick={() => setListOnEbay(!listOnEbay)}
-              className={cn(
-                'relative ml-3 inline-flex h-5 w-9 flex-shrink-0 cursor-pointer items-center rounded-full',
-                'transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1',
-                listOnEbay ? 'bg-blue-500' : 'bg-secondary border border-border',
-              )}
-            >
-              <span className={cn(
-                'inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform',
-                listOnEbay ? 'translate-x-4' : 'translate-x-0.5',
-              )} />
-            </button>
+            {listableCount > 0 && (
+              <div className="text-right flex-shrink-0">
+                <p className="text-xs text-muted-foreground">Est. total list value</p>
+                <p className="text-sm font-semibold text-foreground tabular-nums">
+                  {formatGBP(totalListValue)}
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* Markup + price preview — only shown when list toggle is on */}
-          {listOnEbay && (
-            <div className="mt-3 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs text-muted-foreground mb-1">
-                    Markup over eBay avg sold
-                  </label>
-                  <div className="relative flex items-center">
-                    <input
-                      type="number"
-                      min={-50}
-                      max={200}
-                      step={1}
-                      value={markupPct}
-                      onChange={e => setMarkupPct(Number(e.target.value))}
-                      className={cn(
-                        'w-full rounded-lg border border-border bg-secondary px-3 py-2 pr-8',
-                        'text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary',
-                      )}
-                    />
-                    <span className="absolute right-3 text-muted-foreground text-sm">%</span>
-                  </div>
-                </div>
-                {listableCount > 0 && (
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-xs text-muted-foreground">Est. total list value</p>
-                    <p className="text-sm font-semibold text-foreground tabular-nums">
-                      {formatGBP(totalListValue)}
-                    </p>
-                  </div>
-                )}
-              </div>
+          <div className="flex items-center gap-3">
+            {/* Strategy: relative to market, or margin over cost */}
+            <div className="flex rounded-lg border border-border overflow-hidden shrink-0">
+              {([
+                { id: 'market' as const, label: 'vs eBay price' },
+                { id: 'cost'   as const, label: 'over cost' },
+              ]).map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => { setPriceMode(m.id); setAdjustPct(m.id === 'cost' ? orgMarkup : 0) }}
+                  className={cn(
+                    'px-3 py-2 text-xs font-medium transition-colors',
+                    priceMode === m.id
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-secondary text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
 
-              {/* Per-card price preview */}
+            <div className="flex-1">
+              <div className="relative flex items-center">
+                <input
+                  type="number"
+                  min={priceMode === 'market' ? -50 : 0}
+                  max={priceMode === 'market' ? 200 : 500}
+                  step={1}
+                  value={adjustPct}
+                  onChange={e => setAdjustPct(Number(e.target.value))}
+                  className={cn(
+                    'w-full rounded-lg border border-border bg-secondary px-3 py-2 pr-8',
+                    'text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary',
+                  )}
+                />
+                <span className="absolute right-3 text-muted-foreground text-sm">%</span>
+              </div>
+            </div>
+          </div>
+
+          {unlistableCount > 0 && (
+            <p className="text-[11px] text-amber-400/80 mt-2">
+              {unlistableCount} card{unlistableCount !== 1 ? 's have' : ' has'} neither a cost nor
+              eBay data, so no price can be derived. They&apos;ll import to stock unpriced.
+            </p>
+          )}
+
+          {/* Per-card price preview */}
+          <div className="mt-3">
               {pricedCards.length > 0 && (
                 <div className="rounded-lg border border-border bg-secondary/40 overflow-hidden">
                   <div className="grid grid-cols-3 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -550,19 +627,91 @@ export function ImportPanel({
                       )
                     })}
                   </div>
-                  {unlistableCount > 0 && (
-                    <div className="px-3 py-1.5 border-t border-border/50">
-                      <p className="text-[10px] text-amber-400/80">
-                        ⚠ {unlistableCount} card{unlistableCount !== 1 ? 's' : ''} without eBay data will be imported to stock but not listed
-                      </p>
-                    </div>
-                  )}
                 </div>
               )}
+            </div>
+        </div>
 
-              {listableCount === 0 && (
-                <p className="text-xs text-amber-400/80">
-                  ⚠ None of your cards have eBay price data — they'll be imported to stock only.
+        {/* ── Listing mode ──────────────────────────────────────────── */}
+        <div className="px-4 py-3.5">
+          <p className="text-sm font-medium text-foreground mb-0.5">After import</p>
+          <p className="text-xs text-muted-foreground mb-3">
+            Cards are priced either way — this only decides where they go on eBay.
+          </p>
+
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              {
+                id: 'none' as const,
+                icon: <Package className="h-4 w-4" />,
+                label: 'Stock only',
+                hint: 'List later',
+              },
+              {
+                id: 'individual' as const,
+                icon: <Tag className="h-4 w-4" />,
+                label: 'Individual',
+                hint: `${listableCount} listing${listableCount !== 1 ? 's' : ''}`,
+              },
+              {
+                id: 'set' as const,
+                icon: <Boxes className="h-4 w-4" />,
+                label: 'One set listing',
+                hint: `${listableCount} variation${listableCount !== 1 ? 's' : ''}`,
+              },
+            ]).map(m => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setListingMode(m.id)}
+                aria-pressed={listingMode === m.id}
+                className={cn(
+                  'flex flex-col items-center gap-1 rounded-lg border px-3 py-3 transition-colors text-center',
+                  listingMode === m.id
+                    ? m.id === 'set'
+                      ? 'border-teal-500/50 bg-teal-500/10 text-teal-400'
+                      : 'border-primary/50 bg-primary/10 text-primary'
+                    : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {m.icon}
+                <span className="text-xs font-medium">{m.label}</span>
+                <span className="text-[10px] opacity-70">{m.hint}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Set listing title */}
+          {listingMode === 'set' && (
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs text-muted-foreground">
+                Listing title
+              </label>
+              <input
+                type="text"
+                value={setTitle}
+                onChange={e => setSetTitle(e.target.value)}
+                maxLength={80}
+                placeholder="e.g. Black Star Promos — Complete Your Set!"
+                className={cn(
+                  'w-full rounded-lg border border-border bg-secondary px-3 py-2',
+                  'text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary',
+                  'placeholder:text-muted-foreground/40',
+                )}
+              />
+              <p className="text-[10px] text-muted-foreground text-right">{setTitle.length}/80</p>
+
+              {listableCount > 250 && (
+                <p className="text-xs text-amber-400/90">
+                  ⚠ eBay caps a listing at 250 variations. Only the first 250 would be
+                  accepted — split this into multiple set listings.
+                </p>
+              )}
+              {restockCount > 0 && mergeRestocks && (
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  The {restockCount} restocked card{restockCount !== 1 ? 's' : ''} won&apos;t be added
+                  to this listing — {restockCount !== 1 ? 'they already belong' : 'it already belongs'} somewhere,
+                  and re-adding would advertise the same stock twice.
                 </p>
               )}
             </div>
@@ -587,13 +736,19 @@ export function ImportPanel({
           className="flex-1"
           onClick={handleImport}
           loading={isImporting}
-          disabled={readyCards.length === 0 || isImporting}
+          disabled={
+            readyCards.length === 0 ||
+            isImporting ||
+            (listingMode === 'set' && setTitle.trim().length === 0)
+          }
         >
-          {listOnEbay
-            ? `Import & List ${listableCount > 0 ? listableCount : readyCards.length} on eBay`
-            : mergeRestocks && restockCount > 0
-              ? `Import ${newCount} new · restock ${restockCount}`
-              : `Import ${readyCards.length} card${readyCards.length !== 1 ? 's' : ''}`}
+          {listingMode === 'set'
+            ? `Import ${readyCards.length} & create set listing`
+            : listingMode === 'individual'
+              ? `Import & list ${listableCount > 0 ? listableCount : readyCards.length} on eBay`
+              : mergeRestocks && restockCount > 0
+                ? `Import ${newCount} new · restock ${restockCount}`
+                : `Import ${readyCards.length} card${readyCards.length !== 1 ? 's' : ''}`}
         </Button>
       </div>
     </div>

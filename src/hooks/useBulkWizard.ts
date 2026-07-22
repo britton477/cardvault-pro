@@ -23,6 +23,13 @@ import type {
   BulkPriceResponse,
   CardCondition,
 } from '@/types'
+import {
+  derivePrices, defaultStrategy,
+  type PricingStrategy,
+} from '@/lib/pricing'
+
+/** Where a batch of imported cards should end up on eBay. */
+export type ListingMode = 'none' | 'individual' | 'set'
 
 // At most 5 identify requests in-flight at once.
 // At ~7s avg per card, 5 concurrent ≈ 43 identifications/min — safely under
@@ -184,8 +191,12 @@ export interface BulkWizardHook {
   importAll:       (opts: {
     lot_id?:         string
     source?:         string
-    list_on_ebay?:   boolean
-    markup_pct?:     number
+    /** none = stock only · individual = one listing per card · set = one listing for all */
+    listing_mode?:   ListingMode
+    /** How to derive an asking price. Applied regardless of listing mode. */
+    strategy?:       PricingStrategy
+    /** Title for the set listing, required when listing_mode is 'set' */
+    set_title?:      string
     /** Merge scans matching existing stock into that stock. Defaults true. */
     merge_restocks?: boolean
   }) => Promise<{
@@ -193,6 +204,9 @@ export interface BulkWizardHook {
     restocked?:         number
     restocked_details?: Array<{ card_id: string; card_name: string; qty_before: number; qty_after: number }>
     ebay_pushed?:       number
+    listing_mode?:      ListingMode
+    set_listing_url?:   string | null
+    set_listing_error?: string | null
     ebay_listed?:       number
     ebay_failed?:       number
     ebay_failed_ids?:   string[]
@@ -389,8 +403,12 @@ export function useBulkWizard(): BulkWizardHook {
   const importAll = useCallback(async (opts: {
     lot_id?:         string
     source?:         string
-    list_on_ebay?:   boolean
-    markup_pct?:     number
+    /** none = stock only · individual = one listing per card · set = one listing for all */
+    listing_mode?:   ListingMode
+    /** How to derive an asking price. Applied regardless of listing mode. */
+    strategy?:       PricingStrategy
+    /** Title for the set listing, required when listing_mode is 'set' */
+    set_title?:      string
     merge_restocks?: boolean
   }) => {
     setIsImporting(true)
@@ -398,19 +416,30 @@ export function useBulkWizard(): BulkWizardHook {
 
     try {
       const computed = computeCosts(cards, totalSpend)
-      const markup   = opts.markup_pct ?? 0
+      const listingMode = opts.listing_mode ?? 'none'
+      const strategy    = opts.strategy ?? defaultStrategy()
 
       // Keep a ref to the original ready cards so we can match them to card_ids after import
       const readyCards = computed.filter(c => c.status === 'ready' && c.card_name)
 
-      const payload = readyCards.map(c => {
-        // Priority: per-card price set on scan row → markup calculation → null
-        const listed_price =
-          c.listed_price !== null
-            ? c.listed_price
-            : opts.list_on_ebay && c.ebay_avg_sold
-              ? Math.round(c.ebay_avg_sold * (1 + markup / 100) * 100) / 100
-              : null
+      // Pricing runs for EVERY import, independent of listing intent.
+      //
+      // Previously listed_price was only written when the eBay toggle was on,
+      // so importing to stock left cards unpriced — and any later attempt to
+      // bulk-list or set-list them was rejected for having no price. A card
+      // gets an asking price because it entered inventory, not because you
+      // happened to tick a box.
+      const prices = derivePrices(
+        readyCards.map(c => ({
+          purchase_price: c.proportional_cost ?? 0,
+          ebay_avg_sold:  c.ebay_avg_sold,
+          listed_price:   c.listed_price,
+        })),
+        strategy,
+      )
+
+      const payload = readyCards.map((c, i) => {
+        const listed_price = prices[i]?.price ?? null
 
         return {
           card_name:      c.overrides.card_name   ?? c.card_name,
@@ -477,8 +506,46 @@ export function useBulkWizard(): BulkWizardHook {
       let ebay_listed     = 0
       let ebay_failed     = 0
       let ebay_failed_ids: string[] = []
+      let set_listing_url: string | null = null
+      let set_listing_error: string | null = null
       const EBAY_CHUNK_SIZE = 100
-      if (opts.list_on_ebay && result.card_ids.length > 0) {
+
+      // ── Set listing: one eBay listing containing every card as a variation ──
+      //
+      // Uses the same endpoint as the Stock page's "Set Listing" action, so the
+      // two entry points cannot drift apart. Restocked cards are excluded —
+      // they already belong to a listing, and adding them again would advertise
+      // the same stock twice.
+      if (listingMode === 'set' && result.new_card_ids.length > 0) {
+        try {
+          const setRes = await fetch('/api/ebay/set-listings', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              card_ids:    result.new_card_ids,
+              title:       opts.set_title ?? 'Pokémon Cards — Complete Your Set!',
+              description: '',
+              set_code:    readyCards[0]?.overrides.set_code ?? readyCards[0]?.set_code ?? '',
+              condition:   readyCards[0]?.overrides.condition ?? readyCards[0]?.condition ?? 'NM',
+            }),
+          })
+          const setJson = await setRes.json() as {
+            set_listing?: { ebay_url?: string }
+            error?: string; message?: string
+          }
+          if (!setRes.ok) {
+            set_listing_error = setJson.message ?? setJson.error ?? `Error ${setRes.status}`
+          } else {
+            set_listing_url = setJson.set_listing?.ebay_url ?? null
+            ebay_listed     = result.new_card_ids.length
+          }
+        } catch (err) {
+          // Non-fatal — the cards are already safely in stock
+          set_listing_error = err instanceof Error ? err.message : 'Set listing failed'
+        }
+      }
+
+      if (listingMode === 'individual' && result.card_ids.length > 0) {
         try {
           for (let i = 0; i < result.card_ids.length; i += EBAY_CHUNK_SIZE) {
             const chunk = result.card_ids.slice(i, i + EBAY_CHUNK_SIZE)
@@ -509,6 +576,9 @@ export function useBulkWizard(): BulkWizardHook {
         restocked:         result.restocked,
         restocked_details: result.restocked_details,
         ebay_pushed:       result.ebay_pushed,
+        listing_mode:      listingMode,
+        set_listing_url,
+        set_listing_error,
         ebay_listed,
         ebay_failed,
         ebay_failed_ids,

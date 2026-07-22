@@ -19,6 +19,7 @@ import { requireAuth, ok, serverError, validationError }                   from 
 import { assertRole }                                                      from '@/lib/permissions.server'
 import { writeAuditLog }                                                  from '@/lib/audit'
 import { BulkCardActionSchema }                                           from '@/types/validation'
+import { derivePrice, type PricingStrategy }                              from '@/lib/pricing'
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,22 +71,49 @@ export async function POST(request: NextRequest) {
         affected = (data ?? []).length
 
       } else {
-        // Markup: fetch purchase prices first, compute per-card, then upsert
+        // Derived pricing — needs each card's cost and market value.
+        //
+        // The arithmetic lives in lib/pricing.ts, shared with the Bulk Wizard,
+        // so pricing a card here and pricing it during import produce the same
+        // number. This route previously had its own inline formula, which is
+        // how "markup" came to mean different things on different screens.
         const { data: cards, error: fetchError } = await db
           .from('cards')
-          .select('id, purchase_price')
+          .select('id, purchase_price, ebay_avg_sold')
           .in('id', input.ids)
           .eq('org_id', orgId)
           .is('deleted_at', null)
 
         if (fetchError) throw fetchError
 
-        const factor  = 1 + input.value / 100
-        const updates = (cards ?? []).map(c => ({
-          id:           c.id,
-          listed_price: Math.round((c.purchase_price as number) * factor * 100) / 100,
-          updated_at:   now,
-        }))
+        // Org markup is the fallback when a card has no eBay comparables
+        const { data: settings } = await db
+          .from('org_settings')
+          .select('markup_pct')
+          .eq('org_id', orgId)
+          .single()
+
+        const orgMarkup = (settings?.['markup_pct'] as number | null) ?? 40
+
+        const strategy: PricingStrategy = input.mode === 'market'
+          ? { mode: 'market', adjustmentPct: input.value }
+          : { mode: 'cost',   markupPct:     input.value }
+
+        const updates = (cards ?? [])
+          .map(c => {
+            const { price } = derivePrice(
+              {
+                purchase_price: c['purchase_price'] as number | null,
+                ebay_avg_sold:  c['ebay_avg_sold']  as number | null,
+              },
+              strategy,
+              orgMarkup,
+            )
+            return price == null ? null : { id: c.id, listed_price: price, updated_at: now }
+          })
+          // Cards with neither a cost nor market data can't be priced. Skip them
+          // rather than writing a zero, which would look like a deliberate £0.
+          .filter((u): u is { id: string; listed_price: number; updated_at: string } => u !== null)
 
         if (updates.length > 0) {
           const { error: upsertError } = await db

@@ -58,20 +58,15 @@ export function calcBuyerTotal(listPrice: number): number {
   return Math.round((listPrice + calcBuyerFee(listPrice)) * 100) / 100
 }
 
-/**
- * Suggest a list price given purchase price and optional eBay avg.
- * If we have eBay market data, use the median. Otherwise apply markup.
- */
-export function suggestListPrice(
-  purchasePrice: number,
-  ebayAvgSold: number | null | undefined,
-  markupPct = 40,
-): number {
-  if (ebayAvgSold && ebayAvgSold > 0) return Math.round(ebayAvgSold * 100) / 100
-  if (!purchasePrice) return 0
-  const marked = purchasePrice * (1 + markupPct / 100)
-  return Math.round(marked * 100) / 100
-}
+// NOTE: suggestListPrice() used to live here.
+//
+// It was one of four competing definitions of "list price" in this codebase,
+// each with different arithmetic and a different default markup. Deriving an
+// asking price now lives solely in lib/pricing.ts — import derivePrice() from
+// there rather than adding a local formula, or the screens drift apart again.
+//
+// This file is for eBay's fee schedule only: what eBay charges, and how to
+// work backwards from a buyer-pays total. It does not decide prices.
 
 /**
  * Calculate profit on a sale.

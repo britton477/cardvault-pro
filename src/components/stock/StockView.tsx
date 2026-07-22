@@ -16,6 +16,7 @@ import { EbayListModal }                     from '@/components/stock/EbayListMo
 import { useOrgSettings }                    from '@/hooks/useSettings'
 import { BulkAssignLotModal }               from '@/components/stock/BulkAssignLotModal'
 import { CreateSetListingModal }             from '@/components/stock/CreateSetListingModal'
+import { BulkPriceModal }                    from '@/components/stock/BulkPriceModal'
 import { RecordSaleModal }                   from '@/components/sales/RecordSaleModal'
 import { Button }                            from '@/components/ui/Button'
 import { Input }                             from '@/components/ui/Input'
@@ -96,6 +97,7 @@ export function StockView() {
   const [selectedIds,       setSelectedIds]       = useState<Set<string>>(new Set())
   const [showEbayModal,       setShowEbayModal]       = useState(false)
   const [showSetListingModal, setShowSetListingModal] = useState(false)
+  const [showPriceModal,      setShowPriceModal]      = useState(false)
   const [showLotModal,        setShowLotModal]        = useState(false)
   const [isRefreshing,      setIsRefreshing]      = useState(false)
   const [statusPendingIds,  setStatusPendingIds]  = useState<Set<string>>(new Set())
@@ -284,6 +286,23 @@ export function StockView() {
 
   async function handleBulkEbayList(ids: string[]) {
     return bulkEbayList.mutateAsync(ids)
+  }
+
+  /** Apply a pricing strategy across the selection */
+  async function handleBulkPrice(mode: 'fixed' | 'markup' | 'market', value: number) {
+    const ids = Array.from(selectedIds)
+    try {
+      const { affected } = await bulkAction.mutateAsync({ action: 'price', ids, mode, value })
+      setShowPriceModal(false)
+      toast.success(
+        `${affected} card${affected !== 1 ? 's' : ''} priced`,
+        affected < ids.length
+          ? `${ids.length - affected} skipped — no cost or eBay data to price from`
+          : undefined,
+      )
+    } catch (err) {
+      toast.error('Pricing failed', err instanceof Error ? err.message : undefined)
+    }
   }
 
   async function handleBulkAssignLot(lotId: string) {
@@ -603,10 +622,21 @@ export function StockView() {
           onPrint={handlePrintLabels}
           onEbayList={() => setShowEbayModal(true)}
           onCreateSetListing={() => setShowSetListingModal(true)}
+          onSetPrice={() => setShowPriceModal(true)}
           onAssignLot={() => setShowLotModal(true)}
           onRefreshPrices={() => { void handleRefreshAllPrices() }}
         />
       )}
+
+      {/* Bulk price modal — market / cost / fixed, shared pricing module */}
+      <BulkPriceModal
+        open={showPriceModal}
+        onClose={() => setShowPriceModal(false)}
+        cards={selectedCards}
+        onApply={(mode, value) => { void handleBulkPrice(mode, value) }}
+        isPending={bulkAction.isPending}
+        orgMarkup={orgSettings?.markup_pct ?? 40}
+      />
 
       {/* Create Set Listing modal — multi-variation eBay listing */}
       <CreateSetListingModal

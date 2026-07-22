@@ -4,7 +4,7 @@
 // Hosts: status dropdown, price button (opens modal), delete with inline confirm.
 // =============================================================================
 import { useState }                from 'react'
-import { X, ChevronDown, Trash2, AlertTriangle, Printer, ShoppingBag, Package, RefreshCw, ReceiptText, Layers } from 'lucide-react'
+import { X, ChevronDown, Trash2, AlertTriangle, Printer, ShoppingBag, Package, RefreshCw, ReceiptText, Layers, Tag } from 'lucide-react'
 import { cn }                      from '@/lib/utils'
 import type { CardStatus }         from '@/types'
 
@@ -21,6 +21,7 @@ interface BulkActionBarProps {
   onPrint:             () => void
   onEbayList:          () => void
   onCreateSetListing:  () => void
+  onSetPrice:          () => void
   onAssignLot:         () => void
   onRefreshPrices:     () => void
 }
@@ -32,7 +33,7 @@ const STATUS_OPTIONS: { value: CardStatus; label: string; warn?: string }[] = [
 ]
 
 export function BulkActionBar({
-  count, isPending, isRefreshing, onClear, onStatusChange, onRegisterSale, onDelete, onPrint, onEbayList, onCreateSetListing, onAssignLot, onRefreshPrices,
+  count, isPending, isRefreshing, onClear, onStatusChange, onRegisterSale, onDelete, onPrint, onEbayList, onCreateSetListing, onSetPrice, onAssignLot, onRefreshPrices,
 }: BulkActionBarProps) {
   const [statusOpen,    setStatusOpen]    = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -154,6 +155,18 @@ export function BulkActionBar({
             >
               <ReceiptText className="h-3.5 w-3.5" />
               Register Sale
+            </button>
+
+            {/* Set price — sits before the listing actions because a price is
+                a precondition for both individual and set listings */}
+            <button
+              onClick={() => { onSetPrice(); setStatusOpen(false) }}
+              disabled={isPending}
+              title="Set asking price across the selected cards"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-secondary transition-colors disabled:opacity-50"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              Set Price
             </button>
 
             {/* Refresh prices — blue */}

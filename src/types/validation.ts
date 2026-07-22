@@ -222,8 +222,17 @@ export const BulkStatusSchema = z.object({
 export const BulkPriceSchema = z.object({
   action: z.literal('price'),
   ids:    bulkIds,
-  mode:   z.enum(['fixed', 'markup']),
-  value:  z.number().min(0).max(999999),  // £ for fixed; % for markup (0–500)
+  /**
+   * How to derive each card's asking price. Mirrors PricingStrategy in
+   * lib/pricing.ts — the same three modes offered by the Bulk Wizard, so a
+   * card priced from either screen lands on the same number.
+   *
+   *   fixed  — value is £ per card
+   *   markup — value is % over purchase_price
+   *   market — value is % applied to ebay_avg_sold (may be negative to undercut)
+   */
+  mode:   z.enum(['fixed', 'markup', 'market']),
+  value:  z.number().min(-50).max(999999),
 })
 
 export const BulkDeleteSchema = z.object({
