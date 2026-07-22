@@ -521,7 +521,9 @@ export async function endItem(
 // Overview:
 //   eBay allows up to 250 variations within a single FixedPriceItem listing.
 //   Each variation is one card identified by its UUID (card.id) as the eBay SKU.
-//   The variation specifier is "Card Name" — displayed to the buyer in the listing.
+//   The variation specifier name is discovered per category via
+//   getVariationSpecificName() — eBay reserves its own item specifics and
+//   rejects them here, so it cannot be hardcoded.
 //   When multiple cards share the same name, the card number is appended:
 //   e.g. "Charizard" (unique) vs "Charizard #006/198" (disambiguated).
 //
@@ -543,6 +545,79 @@ export interface VariationInput {
   displayName: string   // value shown to buyer (e.g. "Charizard" or "Charizard #006/198")
   price:       number
   quantity:    number
+}
+
+// ── Variation specific name discovery ─────────────────────────────────────────
+//
+// eBay forbids using a category's own item specifics as a variation specific.
+// For Pokémon singles (183454), "Card Name" is a recognised aspect, so passing
+// it as the variation specific is rejected:
+//
+//   21920061 — Card Name is not allowed as a variation specific
+//
+// The set of reserved names is category-specific and changes over time, so it
+// cannot be hardcoded. GetCategorySpecifics reports, per aspect, whether it may
+// be used for variations — we ask eBay rather than guessing.
+//
+// Cached per category for the process lifetime: the answer changes on eBay's
+// schedule, not ours, and this would otherwise cost an API call per listing.
+
+const variationSpecificCache = new Map<string, string>()
+
+/**
+ * A name that is safe precisely because it is NOT a Pokémon TCG category
+ * aspect, so it cannot collide with eBay's reserved list. Used when the
+ * category reports no variation-enabled aspects, which is the common case for
+ * trading cards.
+ *
+ * Buyers see this as the dropdown label on the listing, so it has to read
+ * naturally: "Select: Charizard #006".
+ */
+const FALLBACK_VARIATION_SPECIFIC = 'Select'
+
+/**
+ * Discover a variation specific name eBay will accept for a category.
+ *
+ * Prefers an aspect eBay explicitly marks as variation-enabled. Falls back to
+ * a custom name that is not a category aspect, which eBay permits.
+ */
+export async function getVariationSpecificName(
+  orgId: string,
+  categoryId = '183454',
+): Promise<string> {
+  const cached = variationSpecificCache.get(categoryId)
+  if (cached) return cached
+
+  try {
+    const creds = await getCredentials(orgId)
+    const token = await getValidAccessToken(orgId)
+
+    const xml = `${buildXmlHeader('GetCategorySpecifics', token)}
+  <CategoryID>${categoryId}</CategoryID>
+</GetCategorySpecificsRequest>`
+
+    const response = await callTradingApi('GetCategorySpecifics', xml, token, creds.appId)
+
+    // Each recommendation carries validation rules; VariationSpecifics tells us
+    // whether that name may be used to distinguish variations.
+    const blocks = [...response.matchAll(/<NameRecommendation>([\s\S]*?)<\/NameRecommendation>/g)]
+    for (const m of blocks) {
+      const block = m[1] ?? ''
+      const name  = extractXmlField(block, 'Name')
+      const varOk = extractXmlField(block, 'VariationSpecifics')
+      if (name && varOk === 'Enabled') {
+        variationSpecificCache.set(categoryId, name)
+        return name
+      }
+    }
+  } catch (err) {
+    // Discovery is best-effort. A category lookup failure must not block
+    // listing when we have a known-safe fallback.
+    console.warn(`[getVariationSpecificName] lookup failed for ${categoryId}:`, err)
+  }
+
+  variationSpecificCache.set(categoryId, FALLBACK_VARIATION_SPECIFIC)
+  return FALLBACK_VARIATION_SPECIFIC
 }
 
 export interface CreateVariationListingOptions {
@@ -594,7 +669,11 @@ export async function createVariationListing(
   const condId     = '4000'
   const cardCondId = UNGRADED_COND_ID[opts.condition] ?? UNGRADED_COND_ID['NM']!
 
-  // VariationSpecificsSet: every possible "Card Name" value in the listing
+  // Ask eBay what it will accept rather than assuming. "Card Name" is rejected
+  // for this category because it is a recognised item specific.
+  const specificName = await getVariationSpecificName(opts.orgId)
+
+  // VariationSpecificsSet: every value the buyer can choose between
   const allNamesXml = opts.variations
     .map(v => `      <Value>${escapeXml(v.displayName)}</Value>`)
     .join('\n')
@@ -606,7 +685,7 @@ export async function createVariationListing(
       <Quantity>${v.quantity}</Quantity>
       <VariationSpecifics>
         <NameValueList>
-          <Name>Card Name</Name>
+          <Name>${escapeXml(specificName)}</Name>
           <Value>${escapeXml(v.displayName)}</Value>
         </NameValueList>
       </VariationSpecifics>
@@ -634,7 +713,7 @@ export async function createVariationListing(
     <Variations>
       <VariationSpecificsSet>
         <NameValueList>
-          <Name>Card Name</Name>
+          <Name>${escapeXml(specificName)}</Name>
 ${allNamesXml}
         </NameValueList>
       </VariationSpecificsSet>
@@ -736,6 +815,12 @@ export async function addVariationsToListing(
   const creds = await getCredentials(orgId)
   const token = await getValidAccessToken(orgId)
 
+  // Must be the SAME specific name the listing was created with — eBay rejects
+  // a revision whose variation specifics don't match the existing ones. The
+  // per-category cache makes this consistent within a process, and a cold cache
+  // re-derives the same answer from eBay.
+  const specificName = await getVariationSpecificName(orgId)
+
   // Merge existing + new display names — eBay requires the full set on every revise
   const mergedNamesXml = [...existingNames, ...newVariations.map(v => v.displayName)]
     .map(n => `      <Value>${escapeXml(n)}</Value>`)
@@ -747,7 +832,7 @@ export async function addVariationsToListing(
       <Quantity>${v.quantity}</Quantity>
       <VariationSpecifics>
         <NameValueList>
-          <Name>Card Name</Name>
+          <Name>${escapeXml(specificName)}</Name>
           <Value>${escapeXml(v.displayName)}</Value>
         </NameValueList>
       </VariationSpecifics>
@@ -759,7 +844,7 @@ export async function addVariationsToListing(
     <Variations>
       <VariationSpecificsSet>
         <NameValueList>
-          <Name>Card Name</Name>
+          <Name>${escapeXml(specificName)}</Name>
 ${mergedNamesXml}
         </NameValueList>
       </VariationSpecificsSet>
