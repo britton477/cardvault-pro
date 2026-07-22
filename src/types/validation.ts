@@ -52,6 +52,12 @@ export const ListCardsSchema = z.object({
   status:    CardStatusSchema.optional(),
   set_code:  z.string().max(50).optional(),
   condition: CardConditionSchema.optional(),
+  /**
+   * Filter by how the card is listed on eBay.
+   *   single    — its own individual listing
+   *   variation — a line inside a multi-variation "Complete Your Set" listing
+   */
+  listing_type: z.enum(['single', 'variation']).optional(),
   sort:      z.enum(['card_name', 'card_number', 'created_at', 'purchase_price', 'listed_price', 'updated_at', 'ebay_avg_sold']).default('created_at'),
   order:     z.enum(['asc', 'desc']).default('desc'),
 })

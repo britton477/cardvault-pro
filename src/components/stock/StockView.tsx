@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams }                   from 'next/navigation'
-import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash, ShoppingBag, Tag } from 'lucide-react'
+import { Search, Plus, SlidersHorizontal, X as ClearIcon, Hash, ShoppingBag, Tag, Layers } from 'lucide-react'
 import { useQueryClient }                    from '@tanstack/react-query'
 import { useCards, useBulkCardAction }      from '@/hooks/useCards'
 import { useBulkEbayList }                   from '@/hooks/useEbayListings'
@@ -30,10 +30,22 @@ const DEFAULT_FILTERS: StockFilters = {
   status:    'all',
   set_code:  '',
   condition: 'all',
+  listing:   'all',
   sort:      'created_at',
   order:     'desc',
   page:      1,
 }
+
+// Listing-type tabs.
+//
+// 'All' is kept as the default and first option deliberately: cards that are
+// In Stock have no listing type yet, so a two-tab Individual/Set split would
+// hide unlisted stock entirely — which is most of what you work with day to day.
+const LISTING_TABS = [
+  { id: 'all'       as const, label: 'All stock' },
+  { id: 'single'    as const, label: 'Individual listings' },
+  { id: 'variation' as const, label: 'Set listings' },
+]
 
 const PAGE_SIZE = 100
 const STATUS_PILLS = ['all', 'In Stock', 'Listed', 'Sold'] as const
@@ -130,7 +142,7 @@ export function StockView() {
   // Clear selection whenever the visible page/filter set changes
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [filters.page, filters.status, filters.search, filters.condition, filters.set_code, filters.sort, filters.order])
+  }, [filters.page, filters.status, filters.search, filters.condition, filters.set_code, filters.listing, filters.sort, filters.order])
 
   // ── Data ─────────────────────────────────────────────────────────────────
 
@@ -141,6 +153,7 @@ export function StockView() {
     status:    filters.status !== 'all' ? (filters.status as CardStatus) : undefined,
     set_code:  filters.set_code || undefined,
     condition: filters.condition !== 'all' ? (filters.condition as CardCondition) : undefined,
+    listing_type: filters.listing !== 'all' ? filters.listing : undefined,
     sort:      filters.sort,
     order:     filters.order,
   }
@@ -406,6 +419,32 @@ export function StockView() {
   return (
     <div className="space-y-4">
 
+      {/* ── Listing-type tabs ─────────────────────────────────────────────── */}
+      <div className="flex items-center gap-1 border-b border-border" role="tablist">
+        {LISTING_TABS.map(t => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={filters.listing === t.id}
+            onClick={() => setFilter('listing', t.id)}
+            className={cn(
+              'relative px-4 py-2.5 text-sm font-medium transition-colors',
+              filters.listing === t.id
+                ? 'text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              {t.id === 'variation' && <Layers className="h-3.5 w-3.5" />}
+              {t.label}
+            </span>
+            {filters.listing === t.id && (
+              <span className="absolute inset-x-0 -bottom-px h-0.5 bg-primary rounded-full" />
+            )}
+          </button>
+        ))}
+      </div>
+
       {/* Search + filter toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-xs">
@@ -514,7 +553,12 @@ export function StockView() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => { setFilters(DEFAULT_FILTERS); setSearchInput('') }}
+              onClick={() => {
+                // Keep the active tab — clearing filters shouldn't yank the
+                // user out of the listing view they're working in
+                setFilters(prev => ({ ...DEFAULT_FILTERS, listing: prev.listing }))
+                setSearchInput('')
+              }}
               iconLeft={<ClearIcon className="h-3.5 w-3.5" />}
             >
               Clear

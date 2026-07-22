@@ -110,7 +110,8 @@ export function StockTable({
   pendingIds, pricePendingIds, onListItem, onDirectEdit, onRecordSale, onRefreshPrice,
 }: StockTableProps) {
   const bulkEnabled = Boolean(selectedIds && onToggleSelect)
-  const COLUMNS = 10 + (bulkEnabled ? 1 : 0) + (showCardNumber ? 1 : 0)
+  // thumb, name, set, cond, qty, status, cost, listed, ebay avg, added, actions
+  const COLUMNS = 11 + (bulkEnabled ? 1 : 0) + (showCardNumber ? 1 : 0)
 
   // Determine header checkbox state
   const headerState: HeaderCheckState = (() => {
@@ -152,6 +153,7 @@ export function StockTable({
               )}
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Set</th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cond</th>
+              <th className="text-right px-3 py-3 font-medium text-muted-foreground w-14">Qty</th>
               <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
               <SortTh field="purchase_price" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} align="right">Cost</SortTh>
               <SortTh field="listed_price" currentSort={currentSort} currentOrder={currentOrder} onSort={onSort} align="right">Listed</SortTh>
@@ -277,6 +279,21 @@ export function StockTable({
                     <ConditionBadge condition={card.condition} />
                   </td>
 
+                  {/* Quantity — emphasised above 1 so a multi-unit row can't be
+                      mistaken for a single card, and flagged at 0 since that
+                      means sold out rather than simply absent */}
+                  <td className="px-3 py-2 text-right">
+                    {card.qty > 1 ? (
+                      <span className="inline-flex items-center justify-center min-w-[1.75rem] rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums bg-primary/15 text-primary ring-1 ring-inset ring-primary/30">
+                        ×{card.qty}
+                      </span>
+                    ) : card.qty === 0 ? (
+                      <span className="text-xs font-medium tabular-nums text-red-400">0</span>
+                    ) : (
+                      <span className="text-xs tabular-nums text-muted-foreground">1</span>
+                    )}
+                  </td>
+
                   {/* Status + grade + listing type */}
                   <td className="px-4 py-2">
                     <div className="flex flex-col gap-1">
@@ -294,9 +311,15 @@ export function StockTable({
                     </div>
                   </td>
 
-                  {/* Cost */}
+                  {/* Cost — per unit, with the line total shown when holding
+                      more than one so the two figures can't be confused */}
                   <td className="px-4 py-2 text-right tabular-nums text-foreground">
                     {formatGBP(card.purchase_price)}
+                    {card.qty > 1 && (
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatGBP(card.purchase_price * card.qty)} total
+                      </div>
+                    )}
                   </td>
 
                   {/* Listed price */}

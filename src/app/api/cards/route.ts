@@ -36,6 +36,9 @@ export async function GET(request: NextRequest) {
     if (query.condition) {
       q = q.eq('condition', query.condition)
     }
+    if (query.listing_type) {
+      q = q.eq('listing_type', query.listing_type)
+    }
 
     q = q.order(query.sort, { ascending: query.order === 'asc' })
 

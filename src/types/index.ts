@@ -561,6 +561,8 @@ export interface StockFilters {
   status:    CardStatus | 'all'
   set_code:  string
   condition: CardCondition | 'all'
+  /** Listing-type tab: all stock, individual listings, or set listings */
+  listing:   'all' | 'single' | 'variation'
   sort:      'card_name' | 'card_number' | 'created_at' | 'purchase_price' | 'listed_price' | 'updated_at'
   order:     'asc' | 'desc'
   page:      number
