@@ -303,6 +303,8 @@ export const CreateBuyerSchema = z.object({
   email: z.string().email().or(z.literal('')).default(''),
   phone: z.string().max(50).default(''),
   notes: z.string().max(2000).default(''),
+  /** Usually set automatically by eBay order sync, but editable */
+  ebay_username: z.string().max(100).nullish(),
 })
 
 export const UpdateBuyerSchema = CreateBuyerSchema.partial()

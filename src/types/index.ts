@@ -738,6 +738,8 @@ export interface Buyer {
   email:       string
   phone:       string
   notes:       string
+  /** eBay account, set automatically when a synced order is attributed */
+  ebay_username: string | null
   created_by:  string | null
   created_at:  string
   updated_at:  string

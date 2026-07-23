@@ -39,6 +39,84 @@ const DUPLICATE_WINDOW_DAYS = 3
 /** eBay order states that should never become a sale. */
 const NON_SALE_STATUSES = new Set(['Cancelled', 'Inactive', 'Invalid'])
 
+/**
+ * Find or create the buyer behind an eBay order, returning their id.
+ *
+ * Keyed on the eBay username rather than the display name: names repeat, get
+ * changed, and arrive formatted inconsistently from shipping addresses, so
+ * matching on them would silently merge distinct people or split one person
+ * across several rows. The username is stable and unique per account.
+ *
+ * Runs regardless of plan. The Buyers UI is a Growth feature, but capturing the
+ * data costs nothing and means the history is already there on upgrade rather
+ * than starting empty.
+ *
+ * Returns null when eBay gave us nothing usable, or on any failure — buyer
+ * attribution is a bonus, and must never block a sale from importing.
+ */
+async function resolveBuyer(
+  db: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  tx: EbayOrderTransaction,
+): Promise<{ id: string; name: string } | null> {
+  const username = tx.buyerUserId?.trim()
+  const name     = (tx.buyerName?.trim() || username) ?? ''
+
+  if (!username && !name) return null
+
+  try {
+    if (username) {
+      const { data: existing } = await db
+        .from('buyers')
+        .select('id, name')
+        .eq('org_id', orgId)
+        .eq('ebay_username', username)
+        .is('deleted_at', null)
+        .maybeSingle()
+
+      if (existing) {
+        // Backfill a real name onto a buyer we previously only knew by username
+        if (name && name !== username && existing['name'] === username) {
+          await db.from('buyers').update({ name, updated_at: new Date().toISOString() })
+            .eq('id', existing['id'])
+        }
+        return { id: existing['id'] as string, name: name || (existing['name'] as string) }
+      }
+    }
+
+    const { data: created, error } = await db
+      .from('buyers')
+      .insert({
+        org_id:        orgId,
+        name:          name || username,
+        ebay_username: username || null,
+        email:         '',
+        phone:         '',
+        notes:         'Added automatically from an eBay order.',
+      })
+      .select('id, name')
+      .single()
+
+    // 23505 = another concurrent sync created them first; re-read rather than fail
+    if (error?.code === '23505' && username) {
+      const { data: raced } = await db
+        .from('buyers')
+        .select('id, name')
+        .eq('org_id', orgId)
+        .eq('ebay_username', username)
+        .is('deleted_at', null)
+        .maybeSingle()
+      return raced ? { id: raced['id'] as string, name: raced['name'] as string } : null
+    }
+
+    if (error || !created) return null
+    return { id: created['id'] as string, name: created['name'] as string }
+  } catch (err) {
+    console.error('[ebay-orders] buyer resolution failed:', err)
+    return null
+  }
+}
+
 interface CardRow {
   id:                  string
   card_name:           string
@@ -160,7 +238,7 @@ export async function syncEbayOrders(
 
         const { data: candidates } = await db
           .from('sales')
-          .select('id, sold_price, sale_date')
+          .select('id, sold_price, sale_date, buyer_name, buyer_id, tracking_number')
           .eq('org_id', orgId)
           .eq('card_id', card.id)
           .is('ebay_order_id', null)     // manual entries only
@@ -172,13 +250,22 @@ export async function syncEbayOrders(
 
         const existing = candidates?.[0]
         if (existing) {
+          // Enrich the record you typed with what eBay knows about the buyer.
+          // This is the main reason to claim rather than skip: buyer details
+          // are tedious to enter by hand and rarely get filled in manually.
+          const buyer = await resolveBuyer(db, orgId, tx)
+
           await db
             .from('sales')
             .update({
               ebay_order_id:       tx.orderId,
               ebay_transaction_id: tx.transactionId,
-              // Fill the tracking number only if the user hasn't already
-              ...(tx.trackingNumber ? { tracking_number: tx.trackingNumber } : {}),
+              // Only fill blanks — anything you typed yourself wins, since you
+              // may have recorded a detail eBay doesn't carry.
+              ...(buyer && !existing['buyer_id']   ? { buyer_id:   buyer.id }   : {}),
+              ...(buyer && !existing['buyer_name'] ? { buyer_name: buyer.name } : {}),
+              ...(tx.trackingNumber && !existing['tracking_number']
+                ? { tracking_number: tx.trackingNumber } : {}),
               updated_at:          new Date().toISOString(),
             })
             .eq('id', existing['id'])
@@ -193,6 +280,10 @@ export async function syncEbayOrders(
       // flagged — an invented cost would quietly distort profit.
       const purchasePrice = card ? card.purchase_price : 0
       const saleDate      = tx.saleDate ? tx.saleDate.slice(0, 10) : new Date().toISOString().slice(0, 10)
+
+      // Attribute the buyer on new imports too, so both paths build the same
+      // customer history rather than only claimed sales carrying it.
+      const buyer = await resolveBuyer(db, orgId, tx)
 
       const { error: insertErr } = await db.from('sales').insert({
         org_id:              orgId,
@@ -213,7 +304,8 @@ export async function syncEbayOrders(
         sale_date:           saleDate,
         sale_status:         tx.shippedStatus === 'Shipped' ? 'Shipped' : 'Sold',
         tracking_number:     tx.trackingNumber || null,
-        buyer_name:          tx.buyerName || tx.buyerUserId || '',
+        buyer_name:          buyer?.name || tx.buyerName || tx.buyerUserId || '',
+        buyer_id:            buyer?.id ?? null,
         sold_by:             userId,
         ebay_order_id:       tx.orderId,
         ebay_transaction_id: tx.transactionId,

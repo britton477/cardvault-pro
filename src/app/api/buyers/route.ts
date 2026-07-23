@@ -36,7 +36,12 @@ export async function GET(request: NextRequest) {
       .order('name', { ascending: true })
       .range(offset, offset + limit - 1)
 
-    if (search) q = q.ilike('name', `%${search}%`)
+    // Search covers the eBay username too — for a synced buyer that's often the
+    // only identifier you'd actually recall.
+    if (search) {
+      const term = search.replace(/[,()\\]/g, ' ').trim()
+      if (term) q = q.or(`name.ilike.%${term}%,ebay_username.ilike.%${term}%`)
+    }
 
     const { data, count, error } = await q
     if (error) throw error
