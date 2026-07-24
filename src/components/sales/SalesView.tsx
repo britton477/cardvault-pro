@@ -21,6 +21,7 @@ import { useSales, useDeleteSale, useSyncEbayOrders } from '@/hooks/useSales'
 import { RecordSaleModal } from '@/components/sales/RecordSaleModal'
 import { SaleDetailSlideOver } from '@/components/sales/SaleDetailSlideOver'
 import { RefundModal } from '@/components/sales/RefundModal'
+import { MatchSaleModal } from '@/components/sales/MatchSaleModal'
 import { Button } from '@/components/ui/Button'
 import { Select } from '@/components/ui/Select'
 import { SaleStatusBadge, PlatformBadge, SkeletonTableRow, EmptyState } from '@/components/ui'
@@ -95,6 +96,7 @@ export function SalesView() {
   const [showRecord,   setShowRecord]   = useState(false)
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null)
   const [refundSale,   setRefundSale]   = useState<Sale | null>(null)
+  const [matchSale,    setMatchSale]    = useState<Sale | null>(null)
   const [editMode,     setEditMode]     = useState(false)
   const [pendingIds,   setPendingIds]   = useState<Set<string>>(new Set())
   const [selectedIds,  setSelectedIds]  = useState<Set<string>>(new Set())
@@ -366,9 +368,10 @@ export function SalesView() {
           <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
           <span className="text-sm text-amber-300 flex-1">
             {reviewCount} imported sale{reviewCount !== 1 ? 's' : ''} on this page couldn&apos;t be
-            matched to a card — cost price is £0 until you link them.
+            matched to a card — cost price is £0 until you link them. Click a{' '}
+            <span className="font-semibold">MATCH</span> tag to fix one.
           </span>
-          <span className="text-xs text-amber-400 font-medium">Review →</span>
+          <span className="text-xs text-amber-400 font-medium">Show only these →</span>
         </button>
       )}
 
@@ -473,12 +476,13 @@ export function SalesView() {
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-foreground truncate">{sale.card_name}</span>
                         {sale.needs_review && (
-                          <span
-                            title="Imported from eBay but not matched to a card — cost price unconfirmed"
-                            className="rounded px-1 py-px text-[9px] font-semibold bg-amber-500/15 text-amber-400 shrink-0"
+                          <button
+                            onClick={e => { e.stopPropagation(); setMatchSale(sale) }}
+                            title="Not matched to a card — click to match and set the cost"
+                            className="rounded px-1.5 py-px text-[9px] font-semibold bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors shrink-0"
                           >
-                            REVIEW
-                          </span>
+                            MATCH
+                          </button>
                         )}
                         {refunded > 0 && (
                           <span
@@ -737,6 +741,8 @@ export function SalesView() {
       <RecordSaleModal open={showRecord} onClose={() => setShowRecord(false)} />
 
       <RefundModal sale={refundSale} onClose={() => setRefundSale(null)} />
+
+      <MatchSaleModal sale={matchSale} onClose={() => setMatchSale(null)} />
 
       <SaleDetailSlideOver
         sale={selectedSale}
