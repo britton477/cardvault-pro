@@ -23,6 +23,8 @@ import { type NextRequest } from 'next/server'
 import { z, ZodError }      from 'zod'
 import { requireAuth, ok, serverError, validationError, badRequest } from '@/lib/api'
 import { rateLimit, tooManyRequests } from '@/lib/rate-limit'
+import { lookupRarity } from '@/lib/tcg'
+import { inferRarityFromVision, foilFromRarity } from '@/lib/rarity'
 
 const BodySchema = z.object({
   /** Raw base64 JPEG (no data:// prefix). Max ~400KB after client resize to 1200px. */
@@ -35,6 +37,12 @@ const BodySchema = z.object({
    * Covers WOTC era through Black & White (1999–2013).
    */
   retro_mode: z.boolean().optional(),
+  /**
+   * Rarity source. 'tcg' (default) looks up the authoritative rarity; 'vision'
+   * skips the lookup and trusts the model — faster, no external dependency,
+   * but less accurate. Mirrors the org's rarity_source setting.
+   */
+  rarity_source: z.enum(['tcg', 'vision']).optional(),
 })
 
 // Structured extraction prompt — instructs the model to return JSON only.
@@ -313,12 +321,43 @@ export async function POST(request: NextRequest) {
     const condMap: Record<string, string> = { NM: 'NM', LP: 'LP', MP: 'MP', HP: 'HP' }
     const condition = condMap[rawCond] ?? 'NM'
 
+    // ── Authoritative rarity ──────────────────────────────────────────────────
+    // Ask pokemontcg.io what this card actually is; the vision model's guess is
+    // only a fallback when the lookup misses. This is the root-cause fix for
+    // Double Rares being misclassified as SIR — the model no longer decides.
+    // The lookup is cached (30d), so a large single-set import pays it once.
+    // When the org opts into 'vision', skip the lookup entirely.
+    let rarity: string
+    let rarity_source: 'tcg' | 'vision'
+    if (input.rarity_source === 'vision') {
+      rarity        = inferRarityFromVision(foil_type, card_number)
+      rarity_source = 'vision'
+    } else {
+      // The TCG lookup is best-effort and must NEVER fail identify. Any error
+      // (network, cache backend, unexpected response) falls back to the vision
+      // guess — identifying the card is what matters; rarity can be corrected.
+      try {
+        const looked = await lookupRarity(set_code, card_number, card_name)
+        rarity        = looked.matched ? looked.rarity : inferRarityFromVision(foil_type, card_number)
+        rarity_source = looked.matched ? 'tcg' : 'vision'
+      } catch (err) {
+        console.error('[BulkWizard/identify] rarity lookup failed, using vision:', err)
+        rarity        = inferRarityFromVision(foil_type, card_number)
+        rarity_source = 'vision'
+      }
+    }
+
+    // foil_type is now strictly the holo PATTERN — rarity words never leak into it.
+    const foil_pattern = foilFromRarity(rarity, foil_type)
+
     return ok({
       card_name,
       set_code,
       card_number,
       condition,
-      foil_type,
+      foil_type: foil_pattern,
+      rarity,
+      rarity_source,
       language,
       confidence,
     })

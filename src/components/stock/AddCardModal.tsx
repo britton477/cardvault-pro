@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/Select'
 import { cn } from '@/lib/utils'
 import type { CreateCardInput, CardCondition } from '@/types'
 import { CONDITIONS, FOIL_TYPES, LANGUAGES, SOURCES, GRADERS } from './cardConstants'
+import { RARITIES, normaliseRarity } from '@/lib/rarity'
 import type { TcgCard } from '@/app/api/tcg/search/route'
 
 // ── Form state ────────────────────────────────────────────────────────────────
@@ -25,6 +26,7 @@ interface FormState {
   card_number:    string
   condition:      CardCondition
   foil_type:      string
+  rarity:         string
   language:       string
   is_graded:      boolean
   grader:         string
@@ -43,6 +45,7 @@ const EMPTY_FORM: FormState = {
   card_number:    '',
   condition:      'NM',
   foil_type:      'Normal',
+  rarity:         '',
   language:       'EN',
   is_graded:      false,
   grader:         '',
@@ -112,6 +115,8 @@ export function AddCardModal({ open, onClose, defaultLotId }: AddCardModalProps)
       card_name:   card.name,
       set_code:    card.set_code,
       card_number: card.number,
+      // Auto-fill the authoritative rarity from the TCG match (blank stays blank).
+      rarity:      card.rarity ? normaliseRarity(card.rarity) : f.rarity,
     }))
     setTcgResults([])
     setShowTcgDrop(false)
@@ -190,6 +195,7 @@ export function AddCardModal({ open, onClose, defaultLotId }: AddCardModalProps)
       card_number:    form.card_number.trim(),
       condition:      form.condition,
       foil_type:      form.foil_type,
+      rarity:         form.rarity || null,
       language:       form.language,
       is_graded:      form.is_graded,
       grader:         form.is_graded && form.grader ? form.grader : undefined,
@@ -409,6 +415,12 @@ export function AddCardModal({ open, onClose, defaultLotId }: AddCardModalProps)
                 value={form.language}
                 onChange={e => set('language', e.target.value)}
                 options={LANGUAGES}
+              />
+              <Select
+                label="Rarity"
+                value={form.rarity}
+                onChange={e => set('rarity', e.target.value)}
+                options={[{ value: '', label: '—' }, ...RARITIES.map(r => ({ value: r, label: r }))]}
               />
             </div>
 

@@ -18,14 +18,18 @@
 // Image crop: CropModal (file mode) on both the primary thumbnail and any
 // additional photos — updates the in-memory data URL without a server round-trip.
 // =============================================================================
-import { useState, useRef, useCallback } from 'react'
-import { X, RefreshCw, ChevronDown, AlertCircle, Check, Pencil, ImagePlus, ExternalLink, Crop, RotateCcw } from 'lucide-react'
+import { useState, useRef, useCallback, memo } from 'react'
+import { X, RefreshCw, AlertCircle, Check, Pencil, ImagePlus, ExternalLink, Crop, RotateCcw } from 'lucide-react'
 import { cn, formatGBP }        from '@/lib/utils'
 import { getSetName }           from '@/lib/pokemon-sets'
 import { resizeImageToBase64, fileToDataUrl, dataUrlToFile } from '@/lib/image'
-import { CONDITIONS, FOIL_TYPES } from '@/components/stock/cardConstants'
+import { CONDITIONS, FOIL_TYPES, GRADERS } from '@/components/stock/cardConstants'
 import { CropModal }            from '@/components/stock/CropModal'
-import type { BulkWizardCard, CardCondition } from '@/types'
+import { InlineText, InlineSelect, InlineNumber } from '@/components/shared/InlineField'
+import { NetProceeds }          from '@/components/shared/NetProceeds'
+import { RARITIES }             from '@/lib/rarity'
+import type { SellerModel }     from '@/lib/fees'
+import type { BulkWizardCard, CardCondition, Rarity } from '@/types'
 
 interface CardScanRowProps {
   card:     BulkWizardCard
@@ -33,6 +37,8 @@ interface CardScanRowProps {
   onRemove: (uid: string) => void
   onRetry:  (uid: string) => void
   onUpdate: (uid: string, patch: Partial<BulkWizardCard>) => void
+  /** Passed from the parent (computed once) so 100+ rows don't each subscribe. */
+  sellerModel: SellerModel
 }
 
 // ── Status pill ────────────────────────────────────────────────────────────────
@@ -62,84 +68,6 @@ function StatusPill({ status }: { status: BulkWizardCard['status'] }) {
       )}
       {labels[status]}
     </span>
-  )
-}
-
-// ── Inline editable field ──────────────────────────────────────────────────────
-
-function InlineText({
-  value, placeholder, onSave, className,
-}: { value: string; placeholder?: string; onSave: (v: string) => void; className?: string }) {
-  const [editing, setEditing] = useState(false)
-  const [draft,   setDraft]   = useState(value)
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={() => { onSave(draft); setEditing(false) }}
-        onKeyDown={e => {
-          if (e.key === 'Enter')  { onSave(draft); setEditing(false) }
-          if (e.key === 'Escape') { setDraft(value); setEditing(false) }
-        }}
-        className={cn(
-          'w-full rounded border border-primary bg-card px-1.5 py-0.5 text-xs text-foreground',
-          'focus:outline-none focus:ring-1 focus:ring-primary',
-          className,
-        )}
-      />
-    )
-  }
-
-  return (
-    <button
-      onClick={() => { setDraft(value); setEditing(true) }}
-      title="Click to edit"
-      className={cn(
-        'group flex items-center gap-1 text-left rounded px-1 -mx-1',
-        'hover:bg-secondary/60 transition-colors',
-        className,
-      )}
-    >
-      <span className={value ? 'text-foreground' : 'text-muted-foreground/50 italic'}>
-        {value || placeholder}
-      </span>
-      <Pencil className="h-2.5 w-2.5 text-muted-foreground/0 group-hover:text-muted-foreground/50 transition-colors flex-shrink-0" />
-    </button>
-  )
-}
-
-function InlineSelect<T extends string>({
-  value, options, onSave,
-}: { value: T; options: { value: T; label: string }[]; onSave: (v: T) => void }) {
-  const [editing, setEditing] = useState(false)
-
-  if (editing) {
-    return (
-      <select
-        autoFocus
-        value={value}
-        onChange={e => { onSave(e.target.value as T); setEditing(false) }}
-        onBlur={() => setEditing(false)}
-        className="rounded border border-primary bg-card px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-      >
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-    )
-  }
-
-  return (
-    <button
-      onClick={() => setEditing(true)}
-      className="group flex items-center gap-0.5 rounded px-1 -mx-1 hover:bg-secondary/60 transition-colors"
-    >
-      <span className="text-foreground">{options.find(o => o.value === value)?.label ?? value}</span>
-      <ChevronDown className="h-2.5 w-2.5 text-muted-foreground/0 group-hover:text-muted-foreground/50 transition-colors" />
-    </button>
   )
 }
 
@@ -186,7 +114,7 @@ function SetCodeEditor({ setCode, onSave }: { setCode: string; onSave: (v: strin
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardScanRowProps) {
+function CardScanRowImpl({ card, index, onRemove, onRetry, onUpdate, sellerModel }: CardScanRowProps) {
   const isActive  = card.status !== 'queued'
   const isError   = card.status === 'error'
   const isReady   = card.status === 'ready'
@@ -198,6 +126,10 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
   const cardNumber = card.overrides.card_number ?? card.card_number
   const condition  = card.overrides.condition   ?? card.condition
   const foilType   = card.overrides.foil_type   ?? card.foil_type
+  const rarity     = card.overrides.rarity      ?? card.rarity
+  const isGraded   = card.overrides.is_graded   ?? card.is_graded
+  const grader     = card.overrides.grader      ?? card.grader
+  const grade      = card.overrides.grade       ?? card.grade
 
   const setOverride = <K extends keyof BulkWizardCard['overrides']>(
     key: K,
@@ -208,6 +140,8 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
 
   const CONDITION_OPTIONS = CONDITIONS.filter(c => c.value !== 'Sealed')
   const FOIL_OPTIONS      = FOIL_TYPES.map(f => ({ value: f, label: f }))
+  const RARITY_OPTIONS    = RARITIES.map(r => ({ value: r, label: r }))
+  const GRADER_OPTIONS    = GRADERS.map(g => ({ value: g, label: g }))
 
   // ── Additional photos ──────────────────────────────────────────────────────
   const addPhotoRef      = useRef<HTMLInputElement>(null)
@@ -289,7 +223,16 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
       const qs = new URLSearchParams({ card_name: cardName })
       if (setCode)    qs.set('set_code',    setCode)
       if (cardNumber) qs.set('card_number', cardNumber)
-      if (condition)  qs.set('condition',   condition)
+      // A slab prices completely differently from a raw copy — search graded
+      // comps (grader + grade) and drop the raw condition, which is meaningless
+      // for a graded card. Otherwise fall back to the raw condition search.
+      if (isGraded) {
+        qs.set('is_graded', 'true')
+        if (grader) qs.set('grader', grader)
+        if (grade)  qs.set('grade',  grade)
+      } else if (condition) {
+        qs.set('condition', condition)
+      }
       const res = await fetch(`/api/ebay/price?${qs}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json() as { median_price?: number | null; price_count?: number }
@@ -394,17 +337,28 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
                 onSave={v => setOverride('card_number', v)}
                 className="font-mono"
               />
-              <span className="text-border">·</span>
-              <InlineSelect<CardCondition>
-                value={condition}
-                options={CONDITION_OPTIONS}
-                onSave={v => setOverride('condition', v)}
-              />
+              {/* Condition is meaningless for a slabbed card — the grade replaces it. */}
+              {!isGraded && (
+                <>
+                  <span className="text-border">·</span>
+                  <InlineSelect<CardCondition>
+                    value={condition}
+                    options={CONDITION_OPTIONS}
+                    onSave={v => setOverride('condition', v)}
+                  />
+                </>
+              )}
               <span className="text-border">·</span>
               <InlineSelect<string>
                 value={foilType}
                 options={FOIL_OPTIONS}
                 onSave={v => setOverride('foil_type', v)}
+              />
+              <span className="text-border">·</span>
+              <InlineSelect<Rarity>
+                value={rarity}
+                options={RARITY_OPTIONS}
+                onSave={v => setOverride('rarity', v)}
               />
               {card.confidence > 0 && card.confidence < 0.7 && (
                 <span className="text-amber-400/80 text-[10px]">
@@ -414,20 +368,58 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
             </div>
           )}
 
+          {/* Row 2b: grading — user-specified; grade stands in for condition */}
+          {isReady && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setOverride('is_graded', !isGraded)}
+                title="Toggle graded / raw"
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors',
+                  isGraded ? 'bg-primary/15 text-primary' : 'bg-secondary text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {isGraded ? 'Graded' : 'Raw'}
+              </button>
+              {isGraded && (
+                <>
+                  <InlineSelect<string>
+                    value={grader ?? 'PSA'}
+                    options={GRADER_OPTIONS}
+                    onSave={v => setOverride('grader', v)}
+                  />
+                  <InlineText
+                    value={grade ?? ''}
+                    placeholder="grade (e.g. 10)"
+                    onSave={v => setOverride('grade', v)}
+                    className="w-16"
+                  />
+                </>
+              )}
+            </div>
+          )}
+
           {/* Row 3: eBay avg price + refresh + sold search link */}
           {isReady && (
             <div className="flex items-center gap-1.5 text-xs flex-wrap">
-              {card.ebay_avg_sold ? (
-                <>
-                  <span className="text-green-400 font-semibold tabular-nums">
-                    {formatGBP(card.ebay_avg_sold)}
-                  </span>
-                  <span className="text-muted-foreground/60">
-                    avg sold ({card.ebay_sample_count} sales)
-                  </span>
-                </>
-              ) : (
-                <span className="text-muted-foreground/50 italic">No eBay price found</span>
+              {/* Editable — a manual correction here also re-derives purchase cost
+                  (proportional split is recomputed in the wizard on change). */}
+              <span className="text-green-400 font-semibold">
+                <InlineNumber
+                  value={card.ebay_avg_sold}
+                  prefix="£"
+                  placeholder="Set eBay price"
+                  onSave={v => onUpdate(card.uid, {
+                    ebay_avg_sold:     v,
+                    ebay_sample_count: v == null ? 0 : card.ebay_sample_count,
+                  })}
+                />
+              </span>
+              {card.ebay_avg_sold != null && card.ebay_sample_count > 0 && (
+                <span className="text-muted-foreground/60">
+                  avg sold ({card.ebay_sample_count} sales)
+                </span>
               )}
               {/* Refresh eBay price — useful after editing card name / set code */}
               <button
@@ -502,6 +494,8 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
                   <X className="h-3 w-3" />
                 </button>
               )}
+              {/* What you actually receive, excluding postage. */}
+              <NetProceeds listPrice={card.listed_price} sellerModel={sellerModel} className="ml-1" />
             </div>
           )}
 
@@ -619,3 +613,8 @@ export function CardScanRow({ card, index, onRemove, onRetry, onUpdate }: CardSc
     </>
   )
 }
+
+// Memoised: in a 100+ card batch, editing one card must not re-render every row.
+// updateCard keeps unchanged cards' object identity, so only the edited row and
+// rows whose props actually changed re-render.
+export const CardScanRow = memo(CardScanRowImpl)

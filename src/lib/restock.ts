@@ -17,6 +17,9 @@ export interface CardIdentity {
   condition:   string
   foil_type:   string
   language:    string
+  /** Grading breaks fungibility: a PSA 10 is not the same line item as a raw copy, or a PSA 9. */
+  is_graded?:  boolean
+  grade?:      string | null
 }
 
 /** An existing stock row considered as a restock target. */
@@ -50,6 +53,9 @@ export function identityKey(c: CardIdentity): string {
     norm(c.condition),
     norm(c.foil_type),
     norm(c.language),
+    // Graded cards are distinct line items — a PSA 10 must not collapse into a
+    // raw copy, nor a PSA 9 into a PSA 10.
+    c.is_graded ? `graded:${norm(c.grade)}` : 'raw',
   ].join('|')
 }
 

@@ -2,6 +2,9 @@
 // CardVault Pro — Shared TypeScript Types
 // =============================================================================
 
+import type { Rarity } from '@/lib/rarity'
+export type { Rarity } from '@/lib/rarity'
+
 // ── Enums (mirror DB enums) ──────────────────────────────────────────────────
 
 export type OrgPlan            = 'free' | 'basic' | 'growth' | 'pro' | 'business'
@@ -54,6 +57,23 @@ export interface OrgSettings {
   ebay_return_policy_id:           string | null
   /** Reusable set-listing description. Null = use the built-in default. */
   set_listing_template:            string | null
+
+  /** Seller model — determines net-proceeds maths. */
+  seller_model:                    'private' | 'business'
+  /** Business final-value-fee percent (ignored for private). */
+  fvf_pct:                         number
+  /** Business fixed fee per sale (ignored for private). */
+  fvf_fixed:                       number
+
+  // Bulk Wizard batch defaults
+  pricing_mode:                    'market' | 'cost' | 'fixed'
+  pricing_adjustment_pct:          number
+  default_condition:               CardCondition
+  default_source:                  string
+  default_language:                string
+  rarity_source:                   'tcg' | 'vision'
+  pairing_mode:                    'pairs' | 'fronts_then_backs' | 'manual'
+
   updated_at:                      string
 }
 
@@ -74,6 +94,8 @@ export interface Card {
   card_number:      string
   condition:        CardCondition
   foil_type:        string
+  /** Canonical rarity class (lib/rarity). Null on legacy rows until backfilled. */
+  rarity:           string | null
   language:         string
   is_graded:        boolean
   grader:           string | null
@@ -384,13 +406,21 @@ export interface BulkWizardCard {
   card_number: string
   condition:   CardCondition
   foil_type:   string
+  /** Canonical rarity class (lib/rarity) — authoritative from TCG, vision fallback. */
+  rarity:      Rarity
   language:    string
   /** 0–1 confidence score from the vision model */
   confidence:  number
 
+  // Grading — user-specified in the wizard (auto-detection not required).
+  is_graded:   boolean
+  grader:      string | null
+  grade:       string | null
+
   /** User corrections applied on top of AI results */
   overrides: Partial<Pick<BulkWizardCard,
-    'card_name' | 'set_code' | 'card_number' | 'condition' | 'foil_type'>>
+    'card_name' | 'set_code' | 'card_number' | 'condition' | 'foil_type'
+    | 'rarity' | 'is_graded' | 'grader' | 'grade'>>
 
   // eBay pricing (null until price lookup completes)
   ebay_avg_sold:     number | null
@@ -417,6 +447,8 @@ export interface BulkIdentifyRequest {
    * rather than printed text code. For cards from WOTC era through BW (1999–2013).
    */
   retro_mode?: boolean
+  /** Rarity source — mirrors org setting. Defaults to 'tcg' server-side. */
+  rarity_source?: 'tcg' | 'vision'
 }
 
 export interface BulkIdentifyResponse {
@@ -425,6 +457,10 @@ export interface BulkIdentifyResponse {
   card_number: string
   condition:   CardCondition
   foil_type:   string
+  /** Canonical rarity — from TCG lookup where possible, else vision fallback. */
+  rarity:      Rarity
+  /** Where the rarity came from, so the UI can flag low-confidence guesses. */
+  rarity_source: 'tcg' | 'vision'
   language:    string
   confidence:  number
 }
@@ -448,7 +484,11 @@ export interface BulkImportCard {
   card_number:    string
   condition:      CardCondition
   foil_type:      string
+  rarity?:        Rarity
   language:       string
+  is_graded?:     boolean
+  grader?:        string | null
+  grade?:         string | null
   purchase_price: number
   ebay_avg_sold:  number | null
   listed_price?:  number | null
@@ -475,6 +515,7 @@ export interface CreateCardInput {
   card_number?:   string
   condition?:     CardCondition
   foil_type?:     string
+  rarity?:        string | null
   language?:      string
   is_graded?:     boolean
   grader?:        string

@@ -7,6 +7,7 @@ import { redirect }           from 'next/navigation'
 import { createAdminClient }  from '@/lib/supabase/server'
 import { getServerSession }   from '@/lib/auth'
 import { OrgSettingsForm }      from '@/components/settings/OrgSettingsForm'
+import { SellingSettingsForm }  from '@/components/settings/SellingSettingsForm'
 import { PolicyIdsForm }        from '@/components/settings/PolicyIdsForm'
 import { EbayCredentialsForm }  from '@/components/settings/EbayCredentialsForm'
 import { EbayConnectionCard }   from '@/components/settings/EbayConnectionCard'
@@ -95,6 +96,9 @@ export default async function SettingsPage({
 
       {/* ── Organisation ──────────────────────────────────────────────── */}
       <OrgSettingsForm />
+
+      {/* ── Selling & bulk defaults ───────────────────────────────────── */}
+      <SellingSettingsForm />
 
       {/* ── eBay Policy IDs ───────────────────────────────────────────── */}
       <PolicyIdsForm />

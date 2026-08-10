@@ -27,6 +27,7 @@ import {
   derivePrices, defaultStrategy,
   type PricingStrategy,
 } from '@/lib/pricing'
+import { useOrgSettings } from '@/hooks/useSettings'
 
 /** Where a batch of imported cards should end up on eBay. */
 export type ListingMode = 'none' | 'individual' | 'set'
@@ -79,14 +80,16 @@ async function apiIdentify(
   imageBase64: string,
   setCode?: string,
   retroMode?: boolean,
+  raritySource?: 'tcg' | 'vision',
 ): Promise<BulkIdentifyResponse> {
   const res = await fetch('/api/bulk-wizard/identify', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({
-      image:      imageBase64,
-      set_code:   setCode || undefined,
-      retro_mode: retroMode || undefined,
+      image:         imageBase64,
+      set_code:      setCode || undefined,
+      retro_mode:    retroMode || undefined,
+      rarity_source: raritySource || undefined,
     }),
   })
   if (!res.ok) {
@@ -180,6 +183,7 @@ export interface BulkWizardHook {
 
   // Actions
   addImages:       (files: File[]) => void
+  addImagePairs:   (files: File[]) => void
   removeCard:      (uid: string) => void
   updateCard:      (uid: string, patch: Partial<BulkWizardCard>) => void
   retryCard:       (uid: string) => void
@@ -225,6 +229,19 @@ export function useBulkWizard(): BulkWizardHook {
   const [isImporting,   setIsImporting]   = useState(false)
   const [importError,   setImportError]   = useState<string | null>(null)
 
+  // Org batch defaults. Held in a ref so async pipeline callbacks read the
+  // current values without being added to dependency arrays (which would
+  // re-create callbacks and re-schedule in-flight cards).
+  const { data: orgSettings } = useOrgSettings()
+  const defaultsRef = useRef<{ condition: CardCondition; source: string; raritySource: 'tcg' | 'vision' }>({
+    condition: 'NM', source: 'Bulk Wizard', raritySource: 'tcg',
+  })
+  defaultsRef.current = {
+    condition:    (orgSettings?.default_condition as CardCondition) ?? 'NM',
+    source:       orgSettings?.default_source ?? 'Bulk Wizard',
+    raritySource: orgSettings?.rarity_source ?? 'tcg',
+  }
+
   // Wrapper keeps cardsRef in sync so async callbacks can read current cards
   // without triggering renders and without the state-as-getter antipattern.
   const setCards = useCallback(
@@ -264,6 +281,7 @@ export function useBulkWizard(): BulkWizardHook {
         rawBase64,
         setCodeOverride || lockedSetCode || undefined,
         retroMode,
+        defaultsRef.current.raritySource,
       )
 
       updateCard(uid, {
@@ -273,6 +291,7 @@ export function useBulkWizard(): BulkWizardHook {
         card_number: identified.card_number,
         condition:   identified.condition as CardCondition,
         foil_type:   identified.foil_type,
+        rarity:      identified.rarity,
         language:    identified.language,
         confidence:  identified.confidence,
       })
@@ -321,35 +340,38 @@ export function useBulkWizard(): BulkWizardHook {
     }
   }, [runPipeline])
 
+  // ── Blank card factory ──────────────────────────────────────────────────────
+  const makeBlankCard = useCallback((uid: string): BulkWizardCard => ({
+    uid,
+    imageDataUrl:      '',
+    additionalImages:  [],
+    status:            'queued',
+    card_name:         '',
+    set_code:          lockedSetCode,
+    card_number:       '',
+    condition:         defaultsRef.current.condition,
+    foil_type:         'Normal',
+    rarity:            'Unknown',
+    language:          'EN',
+    confidence:        0,
+    is_graded:         false,
+    grader:            null,
+    grade:             null,
+    overrides:         {},
+    ebay_avg_sold:     null,
+    ebay_sample_count: 0,
+    proportional_cost: null,
+    profit_potential:  null,
+    roi_pct:           null,
+    listed_price:      null,
+  }), [lockedSetCode])
+
   // ── Add images ────────────────────────────────────────────────────────────
   const addImages = useCallback((files: File[]) => {
     // Process files sequentially to avoid blocking the main thread
     files.forEach(file => {
       const uid = crypto.randomUUID()
-
-      // Add as queued immediately so the UI renders the row
-      const blankCard: BulkWizardCard = {
-        uid,
-        imageDataUrl:      '',
-        additionalImages:  [],
-        status:            'queued',
-        card_name:         '',
-        set_code:          lockedSetCode,
-        card_number:       '',
-        condition:         'NM',
-        foil_type:         'Normal',
-        language:          'EN',
-        confidence:        0,
-        overrides:         {},
-        ebay_avg_sold:     null,
-        ebay_sample_count: 0,
-        proportional_cost: null,
-        profit_potential:  null,
-        roi_pct:           null,
-        listed_price:      null,
-      }
-
-      setCards(prev => [...prev, blankCard])
+      setCards(prev => [...prev, makeBlankCard(uid)])
 
       // Resize then schedule (async — UI is already updated)
       void (async () => {
@@ -377,7 +399,39 @@ export function useBulkWizard(): BulkWizardHook {
         }
       })()
     })
-  }, [lockedSetCode, schedule, updateCard])
+  }, [makeBlankCard, schedule, updateCard])
+
+  // ── Add images as front+back PAIRS (strict order) ───────────────────────────
+  // Files arrive front,back,front,back… — each consecutive pair becomes one card:
+  // the first image is the front (identified), the second is attached as the back.
+  // A trailing unpaired file is treated as a lone front. If the order is off, the
+  // mistake is visible per-row (each card shows its back thumbnail) and can be
+  // re-paired with the existing add/remove-photo controls.
+  const addImagePairs = useCallback((files: File[]) => {
+    for (let i = 0; i < files.length; i += 2) {
+      const front = files[i]!
+      const back  = files[i + 1]            // undefined when the count is odd
+      const uid   = crypto.randomUUID()
+      setCards(prev => [...prev, makeBlankCard(uid)])
+
+      void (async () => {
+        try {
+          const frontUrl = `data:image/jpeg;base64,${await resizeImageToBase64(front)}`
+          const backUrl  = back ? `data:image/jpeg;base64,${await resizeImageToBase64(back)}` : null
+          const patch: Partial<BulkWizardCard> = {
+            imageDataUrl: frontUrl,
+            ...(backUrl ? { additionalImages: [backUrl] } : {}),
+          }
+          // Sync the ref BEFORE scheduling so runPipeline reads the real image.
+          cardsRef.current = cardsRef.current.map(c => c.uid === uid ? { ...c, ...patch } : c)
+          setCards(prev => prev.map(c => c.uid === uid ? { ...c, ...patch } : c))
+          schedule(uid)
+        } catch {
+          updateCard(uid, { status: 'error', error: 'Failed to read image file' })
+        }
+      })()
+    }
+  }, [makeBlankCard, schedule, updateCard])
 
   // ── Remove a card ─────────────────────────────────────────────────────────
   const removeCard = useCallback((uid: string) => {
@@ -451,11 +505,15 @@ export function useBulkWizard(): BulkWizardHook {
           card_number:    c.overrides.card_number ?? c.card_number,
           condition:      c.overrides.condition   ?? c.condition,
           foil_type:      c.overrides.foil_type   ?? c.foil_type,
+          rarity:         c.overrides.rarity      ?? c.rarity,
           language:       c.language,
+          is_graded:      c.overrides.is_graded   ?? c.is_graded,
+          grader:         c.overrides.grader      ?? c.grader,
+          grade:          c.overrides.grade       ?? c.grade,
           purchase_price: c.proportional_cost ?? 0,
           ebay_avg_sold:  c.ebay_avg_sold,
           listed_price,
-          source:         opts.source || 'Bulk Wizard',
+          source:         opts.source || defaultsRef.current.source,
         }
       })
 
@@ -465,7 +523,7 @@ export function useBulkWizard(): BulkWizardHook {
         body:    JSON.stringify({
           cards:          payload,
           lot_id:         opts.lot_id || null,
-          source:         opts.source || 'Bulk Wizard',
+          source:         opts.source || defaultsRef.current.source,
           merge_restocks: opts.merge_restocks ?? true,
         }),
       })
@@ -620,6 +678,7 @@ export function useBulkWizard(): BulkWizardHook {
     readyCount,
     pendingCount,
     addImages,
+    addImagePairs,
     removeCard,
     updateCard,
     retryCard,

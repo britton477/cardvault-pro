@@ -4,8 +4,35 @@
 // All credential operations are server-side only; the client never sees raw
 // credential values — only { has_credentials, updated_at }.
 // =============================================================================
+import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { OrgSettings } from '@/types'
+import type { SellerModel } from '@/lib/fees'
+
+/** Build the fee-calc SellerModel from stored settings (defaults to private). */
+export function toSellerModel(s: Pick<OrgSettings, 'seller_model' | 'fvf_pct' | 'fvf_fixed'> | undefined): SellerModel {
+  if (s?.seller_model === 'business') {
+    return { kind: 'business', fvfPct: s.fvf_pct ?? 0, fvfFixed: s.fvf_fixed ?? 0 }
+  }
+  return { kind: 'private' }
+}
+
+/**
+ * Seller model for net-proceeds display. Reads the shared org-settings query,
+ * so many callers dedupe onto one fetch. The result is memoised on the
+ * underlying primitives so its identity is stable across renders — callers can
+ * safely pass it to React.memo'd children without defeating the memo.
+ */
+export function useSellerModel(): SellerModel {
+  const { data } = useOrgSettings()
+  const kind  = data?.seller_model === 'business' ? 'business' : 'private'
+  const pct   = data?.fvf_pct   ?? 0
+  const fixed = data?.fvf_fixed ?? 0
+  return useMemo<SellerModel>(
+    () => (kind === 'business' ? { kind, fvfPct: pct, fvfFixed: fixed } : { kind: 'private' }),
+    [kind, pct, fixed],
+  )
+}
 
 // ── Org settings ──────────────────────────────────────────────────────────────
 

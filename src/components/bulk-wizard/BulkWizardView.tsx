@@ -12,6 +12,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { Lock, X, RotateCcw, ArrowRight, ChevronLeft, AlertTriangle, ImagePlus, CheckCircle2 } from 'lucide-react'
 import { useBulkWizard }   from '@/hooks/useBulkWizard'
+import { useOrgSettings, useSellerModel }  from '@/hooks/useSettings'
 import { ScanDropZone }    from './ScanDropZone'
 import { CardScanRow }     from './CardScanRow'
 import { CostBreakdownTable } from './CostBreakdownTable'
@@ -60,6 +61,18 @@ export function BulkWizardView() {
   const [batchBacksMode,    setBatchBacksMode]    = useState(false)
   const [backsAssignCount,  setBacksAssignCount]  = useState(0)
   const [isDraggingBacks,   setIsDraggingBacks]   = useState(false)
+
+  // ── Front+back pairing — seeded once from the org's default pairing mode ─────
+  const { data: orgSettings } = useOrgSettings()
+  const sellerModel = useSellerModel()
+  const [pairMode, setPairMode] = useState(false)
+  const pairSeeded = useRef(false)
+  useEffect(() => {
+    if (!pairSeeded.current && orgSettings) {
+      setPairMode(orgSettings.pairing_mode === 'pairs')
+      pairSeeded.current = true
+    }
+  }, [orgSettings])
 
   const readyCards      = wiz.cards.filter(c => c.status === 'ready')
   const cardsWithoutBacks = readyCards.filter(c => !c.additionalImages?.length)
@@ -236,7 +249,12 @@ export function BulkWizardView() {
               </button>
             </div>
 
-            <ScanDropZone onFiles={wiz.addImages} disabled={false} />
+            <ScanDropZone
+              onFiles={files => pairMode ? wiz.addImagePairs(files) : wiz.addImages(files)}
+              disabled={false}
+              pairMode={pairMode}
+              onPairModeChange={setPairMode}
+            />
 
             {/* Batch backs — shown when there are ready cards */}
             {readyCards.length > 0 && (
@@ -413,6 +431,7 @@ export function BulkWizardView() {
                     onRemove={wiz.removeCard}
                     onRetry={wiz.retryCard}
                     onUpdate={wiz.updateCard}
+                    sellerModel={sellerModel}
                   />
                 ))}
               </div>

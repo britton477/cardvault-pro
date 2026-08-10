@@ -34,6 +34,16 @@ export async function GET() {
       ebay_fulfillment_policy_id_high: null,
       ebay_payment_policy_id:          null,
       ebay_return_policy_id:           null,
+      seller_model:               'private',
+      fvf_pct:                    0,
+      fvf_fixed:                  0,
+      pricing_mode:               'market',
+      pricing_adjustment_pct:     10,
+      default_condition:          'NM',
+      default_source:             'Bulk Wizard',
+      default_language:           'EN',
+      rarity_source:              'tcg',
+      pairing_mode:               'pairs',
       updated_at:                 null,
     })
   } catch (err) {

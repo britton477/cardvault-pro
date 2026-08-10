@@ -13,6 +13,9 @@ import { cn } from '@/lib/utils'
 interface ScanDropZoneProps {
   onFiles: (files: File[]) => void
   disabled?: boolean
+  /** When set, shows the front+back pairing toggle. */
+  pairMode?: boolean
+  onPairModeChange?: (v: boolean) => void
 }
 
 const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
@@ -21,7 +24,7 @@ function filterImages(files: FileList | File[]): File[] {
   return Array.from(files).filter(f => ACCEPTED.includes(f.type))
 }
 
-export function ScanDropZone({ onFiles, disabled }: ScanDropZoneProps) {
+export function ScanDropZone({ onFiles, disabled, pairMode, onPairModeChange }: ScanDropZoneProps) {
   const fileInputRef   = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging]   = useState(false)
@@ -76,7 +79,7 @@ export function ScanDropZone({ onFiles, disabled }: ScanDropZoneProps) {
             {isDragging ? 'Drop to add cards' : 'Drop photos here or click to browse'}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            One photo per card · JPEG, PNG, or WebP
+            {pairMode ? 'Front then back, per card · JPEG, PNG, or WebP' : 'One photo per card · JPEG, PNG, or WebP'}
           </p>
         </div>
 
@@ -113,6 +116,19 @@ export function ScanDropZone({ onFiles, disabled }: ScanDropZoneProps) {
           onChange={e => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }}
         />
       </button>
+
+      {/* Front + back pairing toggle */}
+      {onPairModeChange && (
+        <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none px-1">
+          <input
+            type="checkbox"
+            checked={!!pairMode}
+            onChange={e => onPairModeChange(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-border accent-primary"
+          />
+          Photos are front + back pairs (assigned in upload order)
+        </label>
+      )}
 
       {/* Multi-file button alternative */}
       <button

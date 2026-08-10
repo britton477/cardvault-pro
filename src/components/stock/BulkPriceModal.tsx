@@ -15,6 +15,8 @@ import { useState }      from 'react'
 import { X, TrendingUp, Coins, Tag } from 'lucide-react'
 import { cn, formatGBP } from '@/lib/utils'
 import { derivePrice, describeStrategy, type PricingStrategy } from '@/lib/pricing'
+import { calcNetProceeds } from '@/lib/fees'
+import { useSellerModel } from '@/hooks/useSettings'
 import type { Card }     from '@/types'
 
 type PriceMode = 'fixed' | 'markup' | 'market'
@@ -41,6 +43,7 @@ export function BulkPriceModal({
   const [mode,       setMode]       = useState<PriceMode>('market')
   const [fixedValue, setFixedValue] = useState('')
   const [pctValue,   setPctValue]   = useState('0')
+  const sellerModel = useSellerModel()
 
   if (!open) return null
 
@@ -65,6 +68,7 @@ export function BulkPriceModal({
   const priceable   = previews.filter(p => p.result.price != null)
   const unpriceable = previews.length - priceable.length
   const totalValue  = priceable.reduce((s, p) => s + (p.result.price ?? 0), 0)
+  const totalNet    = priceable.reduce((s, p) => s + calcNetProceeds(p.result.price ?? 0, sellerModel).youReceive, 0)
   const fromCost    = priceable.filter(p => p.result.basis === 'cost' && mode === 'market').length
 
   const isValid =
@@ -213,6 +217,8 @@ export function BulkPriceModal({
         <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-border shrink-0">
           <div className="text-xs text-muted-foreground">
             Total <span className="font-semibold text-foreground tabular-nums">{formatGBP(totalValue)}</span>
+            <span className="mx-1.5 text-border">·</span>
+            you get <span className="font-semibold text-green-400 tabular-nums">{formatGBP(totalNet)}</span>
           </div>
           <div className="flex items-center gap-2">
             <button

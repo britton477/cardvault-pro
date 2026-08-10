@@ -257,8 +257,12 @@ export function StockTable({
                     {!showCardNumber && card.card_number && (
                       <div className="text-xs text-muted-foreground">#{card.card_number}</div>
                     )}
-                    {card.foil_type && card.foil_type !== 'Normal' && (
-                      <div className="text-xs text-primary/70">{card.foil_type}</div>
+                    {((card.rarity && card.rarity !== 'Unknown') || (card.foil_type && card.foil_type !== 'Normal')) && (
+                      <div className="text-xs text-primary/70 truncate">
+                        {[card.rarity && card.rarity !== 'Unknown' ? card.rarity : null,
+                          card.foil_type && card.foil_type !== 'Normal' ? card.foil_type : null]
+                          .filter(Boolean).join(' · ')}
+                      </div>
                     )}
                   </td>
 

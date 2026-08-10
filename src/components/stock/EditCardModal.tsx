@@ -15,6 +15,9 @@ import { Select } from '@/components/ui/Select'
 import { Textarea } from '@/components/ui/Textarea'
 import { cn } from '@/lib/utils'
 import { CONDITIONS, FOIL_TYPES, LANGUAGES, SOURCES, GRADERS } from './cardConstants'
+import { RARITIES } from '@/lib/rarity'
+import { NetProceeds } from '@/components/shared/NetProceeds'
+import { useSellerModel } from '@/hooks/useSettings'
 import type { Card, UpdateCardInput, CardCondition, CardStatus } from '@/types'
 
 // ── Form state ─────────────────────────────────────────────────────────────────
@@ -25,6 +28,7 @@ interface FormState {
   card_number:    string
   condition:      CardCondition
   foil_type:      string
+  rarity:         string
   language:       string
   is_graded:      boolean
   grader:         string
@@ -45,6 +49,7 @@ function cardToForm(card: Card): FormState {
     card_number:    card.card_number ?? '',
     condition:      card.condition,
     foil_type:      card.foil_type ?? 'Normal',
+    rarity:         card.rarity ?? '',
     language:       card.language ?? 'EN',
     is_graded:      card.is_graded,
     grader:         card.grader ?? '',
@@ -73,6 +78,7 @@ export function EditCardModal({ card, onClose }: EditCardModalProps) {
 
   const updateCard    = useUpdateCard(card?.id ?? '')
   const { toast }     = useToast()
+  const sellerModel   = useSellerModel()
   const open          = card !== null
 
   // Sync form state whenever a new card is passed in
@@ -121,6 +127,7 @@ export function EditCardModal({ card, onClose }: EditCardModalProps) {
       card_number:    form.card_number.trim(),
       condition:      form.condition,
       foil_type:      form.foil_type,
+      rarity:         form.rarity || null,
       language:       form.language,
       is_graded:      form.is_graded,
       grader:         form.is_graded && form.grader ? form.grader : undefined,
@@ -227,6 +234,12 @@ export function EditCardModal({ card, onClose }: EditCardModalProps) {
                 onChange={e => set('language', e.target.value)}
                 options={LANGUAGES}
               />
+              <Select
+                label="Rarity"
+                value={form.rarity}
+                onChange={e => set('rarity', e.target.value)}
+                options={[{ value: '', label: '—' }, ...RARITIES.map(r => ({ value: r, label: r }))]}
+              />
             </div>
 
             {/* ── Status + qty ─────────────────────────────────── */}
@@ -287,6 +300,11 @@ export function EditCardModal({ card, onClose }: EditCardModalProps) {
               error={errors.listed_price}
               hint="The price you have this listed for sale"
             />
+            {form.listed_price && !isNaN(parseFloat(form.listed_price)) && (
+              <div className="-mt-1">
+                <NetProceeds listPrice={parseFloat(form.listed_price)} sellerModel={sellerModel} />
+              </div>
+            )}
 
             {/* ── Graded toggle ─────────────────────────────────── */}
             <div className="flex items-center gap-3">

@@ -58,6 +58,59 @@ export function calcBuyerTotal(listPrice: number): number {
   return Math.round((listPrice + calcBuyerFee(listPrice)) * 100) / 100
 }
 
+// =============================================================================
+// NET PROCEEDS — what YOU actually receive for a given list price.
+//
+// Two eBay UK seller models, because the money moves differently:
+//
+//   private  → you pay no selling fees. The BUYER pays a Buyer Protection fee
+//              on top of your price, so you receive the full list price. The
+//              useful extra number is what the buyer actually pays.
+//   business → you pay a Final Value Fee (percent of the sale + a fixed part)
+//              out of the sale, so you receive list − FVF.
+//
+// Postage is deliberately excluded on both sides — this is item price only, so
+// cost/profit tracking compares like with like.
+// =============================================================================
+
+export type SellerModel =
+  | { kind: 'private' }
+  | { kind: 'business'; fvfPct: number; fvfFixed: number }
+
+export interface NetProceeds {
+  /** What the buyer pays for the item, excluding postage (list + protection). */
+  buyerPaysExclPostage: number
+  /** What lands in your account for the item, excluding postage. */
+  youReceive: number
+  /** The fee deducted from YOU (0 for private sellers). */
+  fee: number
+}
+
+/** Round to whole pence — money is never carried at floating precision. */
+function p2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+/**
+ * Given a list price and the org's seller model, return what the buyer pays
+ * (excl. postage) and what you receive (excl. postage).
+ */
+export function calcNetProceeds(listPrice: number, model: SellerModel): NetProceeds {
+  const lp = listPrice > 0 ? listPrice : 0
+  if (lp === 0) return { buyerPaysExclPostage: 0, youReceive: 0, fee: 0 }
+
+  const buyerPaysExclPostage = calcBuyerTotal(lp)
+
+  if (model.kind === 'private') {
+    // Buyer covers the protection fee; you keep the full list price.
+    return { buyerPaysExclPostage, youReceive: p2(lp), fee: 0 }
+  }
+
+  // Business: FVF comes out of your proceeds.
+  const fvf = p2(lp * (model.fvfPct / 100) + model.fvfFixed)
+  return { buyerPaysExclPostage, youReceive: p2(lp - fvf), fee: fvf }
+}
+
 // NOTE: suggestListPrice() used to live here.
 //
 // It was one of four competing definitions of "list price" in this codebase,

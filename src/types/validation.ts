@@ -20,6 +20,7 @@ export const CreateCardSchema = z.object({
   card_number:    z.string().max(50).default(''),
   condition:      CardConditionSchema.default('NM'),
   foil_type:      z.string().max(50).default('Normal'),
+  rarity:         z.string().max(40).nullish(),
   language:       z.string().max(10).default('EN'),
   is_graded:      z.boolean().default(false),
   grader:         z.string().max(50).nullish(),
@@ -413,6 +414,20 @@ export const OrgSettingsSchema = z.object({
    * {CONDITION} and {SHOP}. Null/empty falls back to the built-in default.
    */
   set_listing_template:            z.string().max(8000).nullish(),
+
+  // Seller model — drives net-proceeds maths (see lib/fees.ts).
+  seller_model:                 z.enum(['private', 'business']).optional(),
+  fvf_pct:                      z.number().min(0).max(100).optional(),
+  fvf_fixed:                    z.number().min(0).max(100).optional(),
+
+  // Bulk Wizard batch defaults (all user-adjustable).
+  pricing_mode:                 z.enum(['market', 'cost', 'fixed']).optional(),
+  pricing_adjustment_pct:       z.number().min(-100).max(500).optional(),
+  default_condition:            z.enum(['NM', 'LP', 'MP', 'HP', 'Sealed']).optional(),
+  default_source:               z.string().max(200).optional(),
+  default_language:             z.string().max(10).optional(),
+  rarity_source:                z.enum(['tcg', 'vision']).optional(),
+  pairing_mode:                 z.enum(['pairs', 'fronts_then_backs', 'manual']).optional(),
 })
 
 export const EbayCredentialsSchema = z.object({

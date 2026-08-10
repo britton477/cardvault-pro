@@ -16,33 +16,16 @@ import { cn }           from '@/lib/utils'
 import { formatGBP }    from '@/lib/utils'
 import type { Card }    from '@/types'
 import { buildListingTitle, buildListingDescription } from '@/lib/ebay-client'
+import { calcBuyerFee, calcNetProceeds } from '@/lib/fees'
+import { useSellerModel } from '@/hooks/useSettings'
 
-// ── eBay Buyer Protection fee (UK, from 17 July 2025) ────────────────────────
-// Tiered structure added ON TOP of the item price — seller receives 100%.
-//   7% on first £20
-//   4% on £20–£300
-//   2% on £300–£4,000
-//   £0.10 flat per item
-// https://www.ebay.co.uk/help/selling/fees-credits-invoices/selling-fees
-
-function calcBuyerProtectionFee(price: number): number {
-  if (price <= 0) return 0
-  let fee = 0.10 // flat per item
-  if (price <= 20) {
-    fee += price * 0.07
-  } else if (price <= 300) {
-    fee += 20 * 0.07 + (price - 20) * 0.04
-  } else if (price <= 4000) {
-    fee += 20 * 0.07 + 280 * 0.04 + (price - 300) * 0.02
-  } else {
-    fee += 20 * 0.07 + 280 * 0.04 + 3700 * 0.02
-  }
-  return Math.round(fee * 100) / 100
-}
+// Fee maths lives in lib/fees.ts (single source of truth). The buyer-protection
+// bracket table used to be duplicated here — it now comes from calcBuyerFee so
+// this modal can never drift from the rest of the app.
 
 function effectiveBpfRate(price: number): string {
   if (price <= 0) return '7%'
-  const fee = calcBuyerProtectionFee(price) - 0.10
+  const fee = calcBuyerFee(price) - 0.10
   const pct  = (fee / price) * 100
   return `${pct.toFixed(1)}%`
 }
@@ -125,13 +108,15 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
     setDescription(buildListingDescription(cardData, price, shopName))
   }, [priceInput, card, shopName])
 
-  if (!open || !card) return null
-
+  const sellerModel = useSellerModel()
   const price       = Number(priceInput) || 0
-  const bpFee       = calcBuyerProtectionFee(price)
-  const buyerPays   = Math.round((price + bpFee) * 100) / 100
+  const net         = calcNetProceeds(price, sellerModel)
+  const protectionFee = calcBuyerFee(price)          // buyer-side fee, shown for context
+  const buyerPays   = net.buyerPaysExclPostage
   const isHighValue = price >= 20
   const priceValid  = price > 0
+
+  if (!open || !card) return null
   const hasNoPhotos = Array.isArray(card.photos) && card.photos.length === 0
 
   const stockQty = Math.max(1, card.qty ?? 1)
@@ -257,15 +242,21 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
               {priceValid && (
                 <div className="rounded-lg border border-border bg-secondary/40 divide-y divide-border text-sm">
                   <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-muted-foreground">You receive (item price)</span>
-                    <span className="font-semibold text-foreground">{formatGBP(price)}</span>
+                    <span className="text-muted-foreground">You receive{sellerModel.kind === 'private' ? ' (item price)' : ''}</span>
+                    <span className="font-semibold text-green-400">{formatGBP(net.youReceive)}</span>
                   </div>
+                  {sellerModel.kind === 'business' && (
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-muted-foreground">eBay final value fee</span>
+                      <span className="text-muted-foreground">−{formatGBP(net.fee)}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between px-4 py-2.5">
                     <span className="text-muted-foreground">
-                      eBay Buyer Protection fee{' '}
-                      <span className="text-xs">(~{effectiveBpfRate(price)} + £0.10 flat)</span>
+                      Buyer Protection fee{' '}
+                      <span className="text-xs">(~{effectiveBpfRate(price)} + £0.10 flat, buyer pays)</span>
                     </span>
-                    <span className="text-muted-foreground">+{formatGBP(bpFee)}</span>
+                    <span className="text-muted-foreground">+{formatGBP(protectionFee)}</span>
                   </div>
                   <div className="flex items-center justify-between px-4 py-2.5 bg-secondary/60 rounded-b-lg">
                     <span className="font-medium text-foreground">Buyer will pay</span>

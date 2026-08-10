@@ -27,6 +27,8 @@ const IdentitySchema = z.object({
   condition:      z.string().max(20).default('NM'),
   foil_type:      z.string().max(50).default('Normal'),
   language:       z.string().max(10).default('EN'),
+  is_graded:      z.boolean().optional(),
+  grade:          z.string().max(10).nullish(),
   /** Proportional cost for this scan — used to preview the new blended cost */
   purchase_price: z.number().min(0).max(999999).default(0),
 })

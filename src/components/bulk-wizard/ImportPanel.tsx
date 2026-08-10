@@ -11,7 +11,7 @@
 // imports all cards to inventory, then calls /api/ebay/bulk-list so listings
 // go live without any extra steps.
 // =============================================================================
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter }    from 'next/navigation'
 import { CheckCircle2, Package, TrendingUp, Layers, AlertCircle, Tag, PackagePlus, ExternalLink, Boxes } from 'lucide-react'
 import { useLots }      from '@/hooks/useLots'
@@ -110,6 +110,20 @@ export function ImportPanel({
   // comparables. Previously this setting existed but was read by nothing.
   const orgMarkup = orgSettings?.markup_pct ?? 40
 
+  // Seed the pricing controls + source from the org's saved batch defaults —
+  // once, when settings first load. After that the user's edits win.
+  const seeded = useRef(false)
+  useEffect(() => {
+    if (seeded.current || !orgSettings) return
+    seeded.current = true
+    const mode = orgSettings.pricing_mode === 'cost' ? 'cost' : 'market'
+    setPriceMode(mode)
+    setAdjustPct(mode === 'cost'
+      ? (orgSettings.markup_pct ?? 40)
+      : (orgSettings.pricing_adjustment_pct ?? 10))
+    if (orgSettings.default_source) setSource(orgSettings.default_source)
+  }, [orgSettings])
+
   // Seed a sensible set-listing title once the dominant set code is known
   const dominantSet = (() => {
     const counts = new Map<string, number>()
@@ -187,6 +201,8 @@ export function ImportPanel({
               condition:      c.overrides.condition   ?? c.condition,
               foil_type:      c.overrides.foil_type   ?? c.foil_type,
               language:       c.language,
+              is_graded:      c.overrides.is_graded   ?? c.is_graded,
+              grade:          c.overrides.grade       ?? c.grade,
               purchase_price: c.proportional_cost ?? 0,
             })),
           }),

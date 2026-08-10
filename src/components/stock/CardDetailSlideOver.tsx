@@ -233,6 +233,9 @@ export function CardDetailSlideOver({ card, onClose }: CardDetailSlideOverProps)
               {card.grader} {card.grade}
             </span>
           )}
+          {card.rarity && card.rarity !== 'Unknown' && (
+            <span className="text-xs text-primary/70 font-medium">{card.rarity}</span>
+          )}
           {card.foil_type && card.foil_type !== 'Normal' && (
             <span className="text-xs text-primary/70 font-medium">{card.foil_type}</span>
           )}
