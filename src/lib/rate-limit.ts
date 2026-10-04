@@ -104,8 +104,18 @@ export async function rateLimit(
            ?? '127.0.0.1'
   const key = `${identifier}:${ip}`
 
-  const { success, limit, remaining, reset } = await limiter.limit(key)
-  return { success, limit, remaining, reset }
+  try {
+    const { success, limit, remaining, reset } = await limiter.limit(key)
+    return { success, limit, remaining, reset }
+  } catch (err) {
+    // Fail OPEN. Rate limiting is an abuse safeguard, not core functionality —
+    // if Upstash is unreachable (outage, deleted free-tier DB, network blip) we
+    // must still serve the request rather than 500 every write endpoint. This
+    // mirrors withCache()'s graceful degradation. An Upstash outage took down
+    // eBay sync / bulk import / price lookups because this used to throw.
+    console.error('[CardVault RateLimit] Redis unavailable, allowing request:', err)
+    return { success: true, limit: config.max, remaining: config.max, reset: 0 }
+  }
 }
 
 /**
