@@ -12,7 +12,7 @@ const nonEmpty = z.string().min(1)
 // ── Card schemas ──────────────────────────────────────────────────────────────
 
 export const CardConditionSchema = z.enum(['NM', 'LP', 'MP', 'HP', 'Sealed'])
-export const CardStatusSchema    = z.enum(['In Stock', 'Listed', 'Sold'])
+export const CardStatusSchema    = z.enum(['In Stock', 'Listed', 'Sold', 'Traded'])
 
 export const CreateCardSchema = z.object({
   card_name:      nonEmpty.max(200),

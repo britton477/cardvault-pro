@@ -49,7 +49,7 @@ const LISTING_TABS = [
 ]
 
 const PAGE_SIZE = 100
-const STATUS_PILLS = ['all', 'In Stock', 'Listed', 'Sold'] as const
+const STATUS_PILLS = ['all', 'In Stock', 'Listed', 'Sold', 'Traded'] as const
 
 const SORT_OPTIONS = [
   { value: 'created_at-desc',      label: 'Newest first'  },

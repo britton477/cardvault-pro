@@ -30,6 +30,7 @@ const badgeVariants = cva(
         'status-In Stock': 'bg-blue-500/15 text-blue-400 ring-blue-500/30',
         'status-Listed':   'bg-purple-500/15 text-purple-400 ring-purple-500/30',
         'status-Sold':     'bg-green-500/15 text-green-400 ring-green-500/30',
+        'status-Traded':   'bg-teal-500/15 text-teal-400 ring-teal-500/30',
         // Sale status
         'sale-Sold':      'bg-amber-500/15 text-amber-400 ring-amber-500/30',
         'sale-Shipped':   'bg-blue-500/15 text-blue-400 ring-blue-500/30',
