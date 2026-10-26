@@ -1104,20 +1104,35 @@ export async function getActiveListings(orgId: string): Promise<EbayActiveListin
   const creds = await getCredentials(orgId)
   const token = await getValidAccessToken(orgId)
 
-  const xml = `${buildXmlHeader('GetMyeBaySelling', token)}
+  // Paginate through ALL active listings. eBay returns 200 per page; a seller
+  // with >200 listings was silently truncated, which breaks any reconciliation
+  // against local stock (and under-shows the eBay Listings page). Loop until
+  // TotalNumberOfPages. ponytail: 50-page safety cap (10k listings); raise if a
+  // seller ever exceeds that.
+  const ENTRIES_PER_PAGE = 200
+  const MAX_PAGES = 50
+  const items: RegExpMatchArray[] = []
+  let pageNumber = 1
+  let totalPages = 1
+  do {
+    const xml = `${buildXmlHeader('GetMyeBaySelling', token)}
   <ActiveList>
     <Include>true</Include>
     <IncludeWatchCount>true</IncludeWatchCount>
     <Pagination>
-      <EntriesPerPage>200</EntriesPerPage>
-      <PageNumber>1</PageNumber>
+      <EntriesPerPage>${ENTRIES_PER_PAGE}</EntriesPerPage>
+      <PageNumber>${pageNumber}</PageNumber>
     </Pagination>
   </ActiveList>
 </GetMyeBaySellingRequest>`
+    const response = await callTradingApi('GetMyeBaySelling', xml, token, creds.appId)
+    if (pageNumber === 1) {
+      totalPages = parseInt(extractXmlField(response, 'TotalNumberOfPages') || '1', 10) || 1
+    }
+    items.push(...response.matchAll(/<Item>([\s\S]*?)<\/Item>/g))
+    pageNumber++
+  } while (pageNumber <= totalPages && pageNumber <= MAX_PAGES)
 
-  const response = await callTradingApi('GetMyeBaySelling', xml, token, creds.appId)
-
-  const items = [...response.matchAll(/<Item>([\s\S]*?)<\/Item>/g)]
   return items.map(m => {
     const block      = m[1] ?? ''
     const listingId  = extractXmlField(block, 'ItemID')
