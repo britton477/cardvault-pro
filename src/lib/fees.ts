@@ -61,16 +61,17 @@ export function calcBuyerTotal(listPrice: number): number {
 // =============================================================================
 // NET PROCEEDS — what YOU actually receive for a given list price.
 //
-// Two eBay UK seller models, because the money moves differently:
+// IMPORTANT: `listPrice` is the price the BUYER PAYS (the asking price you set,
+// which already includes the eBay Buyer Protection fee). This matches how
+// sellers research the market — sold prices on eBay are what the buyer paid.
 //
-//   private  → you pay no selling fees. The BUYER pays a Buyer Protection fee
-//              on top of your price, so you receive the full list price. The
-//              useful extra number is what the buyer actually pays.
-//   business → you pay a Final Value Fee (percent of the sale + a fixed part)
-//              out of the sale, so you receive list − FVF.
+//   private  → the buyer pays your list price; eBay keeps the protection fee,
+//              so YOU receive the eBay item price = list − protection.
+//   business → the buyer pays your list price; eBay's Final Value Fee comes out
+//              of your side, so you receive list − FVF.
 //
-// Postage is deliberately excluded on both sides — this is item price only, so
-// cost/profit tracking compares like with like.
+// Postage is excluded on both sides, so cost/profit tracking compares like with
+// like. The eBay item price (StartPrice) we send is youReceive — see ebay.ts.
 // =============================================================================
 
 export type SellerModel =
@@ -99,16 +100,16 @@ export function calcNetProceeds(listPrice: number, model: SellerModel): NetProce
   const lp = listPrice > 0 ? listPrice : 0
   if (lp === 0) return { buyerPaysExclPostage: 0, youReceive: 0, fee: 0 }
 
-  const buyerPaysExclPostage = calcBuyerTotal(lp)
-
+  // The buyer pays the list price in both models.
   if (model.kind === 'private') {
-    // Buyer covers the protection fee; you keep the full list price.
-    return { buyerPaysExclPostage, youReceive: p2(lp), fee: 0 }
+    // You receive the eBay item price (list minus the buyer-protection fee).
+    const youReceive = calcListFromBuyerPays(lp)
+    return { buyerPaysExclPostage: lp, youReceive, fee: p2(lp - youReceive) }
   }
 
-  // Business: FVF comes out of your proceeds.
+  // Business: FVF comes out of your proceeds; the buyer still pays the list price.
   const fvf = p2(lp * (model.fvfPct / 100) + model.fvfFixed)
-  return { buyerPaysExclPostage, youReceive: p2(lp - fvf), fee: fvf }
+  return { buyerPaysExclPostage: lp, youReceive: p2(lp - fvf), fee: fvf }
 }
 
 // NOTE: suggestListPrice() used to live here.

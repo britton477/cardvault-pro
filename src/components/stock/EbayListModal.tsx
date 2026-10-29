@@ -111,8 +111,8 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
   const sellerModel = useSellerModel()
   const price       = Number(priceInput) || 0
   const net         = calcNetProceeds(price, sellerModel)
-  const protectionFee = calcBuyerFee(price)          // buyer-side fee, shown for context
-  const buyerPays   = net.buyerPaysExclPostage
+  const protectionFee = net.fee                      // protection the buyer pays on top of your item price
+  const buyerPays   = net.buyerPaysExclPostage       // = the price you typed
   const isHighValue = price >= 20
   const priceValid  = price > 0
 
@@ -251,13 +251,15 @@ export function EbayListModal({ open, onClose, card, onSuccess, shopName = 'Vaul
                       <span className="text-muted-foreground">−{formatGBP(net.fee)}</span>
                     </div>
                   )}
-                  <div className="flex items-center justify-between px-4 py-2.5">
-                    <span className="text-muted-foreground">
-                      Buyer Protection fee{' '}
-                      <span className="text-xs">(~{effectiveBpfRate(price)} + £0.10 flat, buyer pays)</span>
-                    </span>
-                    <span className="text-muted-foreground">+{formatGBP(protectionFee)}</span>
-                  </div>
+                  {sellerModel.kind === 'private' && (
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-muted-foreground">
+                        Buyer Protection fee{' '}
+                        <span className="text-xs">(~{effectiveBpfRate(net.youReceive)} + £0.10 flat, buyer pays)</span>
+                      </span>
+                      <span className="text-muted-foreground">+{formatGBP(protectionFee)}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between px-4 py-2.5 bg-secondary/60 rounded-b-lg">
                     <span className="font-medium text-foreground">Buyer will pay</span>
                     <span className="font-bold text-foreground">{formatGBP(buyerPays)}</span>

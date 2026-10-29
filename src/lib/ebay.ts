@@ -13,6 +13,10 @@
 
 import crypto from 'crypto'
 import { createAdminClient } from '@/lib/supabase/server'
+// App prices (listed_price, variation prices) are the BUYER-PAYS price. eBay's
+// StartPrice must be the item price, so the buyer ends up charged our asking
+// price once eBay adds its Buyer Protection fee. This converts at every send.
+import { calcListFromBuyerPays } from '@/lib/fees'
 
 // ── Environment config ────────────────────────────────────────────────────────
 
@@ -440,7 +444,7 @@ export async function listItem(opts: ListItemOptions): Promise<string> {
     <Title>${escapeXml(opts.title)}</Title>
     <Description><![CDATA[${opts.description}]]></Description>
     <PrimaryCategory><CategoryID>183454</CategoryID></PrimaryCategory>
-    <StartPrice>${opts.price.toFixed(2)}</StartPrice>
+    <StartPrice>${calcListFromBuyerPays(opts.price).toFixed(2)}</StartPrice>
     <ConditionID>${condId}</ConditionID>
     ${conditionDescriptorsXml}
     <ItemSpecifics>
@@ -491,7 +495,7 @@ export async function reviseItem(
   const xml = `${buildXmlHeader('ReviseItem', token)}
   <Item>
     <ItemID>${listingId}</ItemID>
-    <StartPrice>${newPrice.toFixed(2)}</StartPrice>
+    <StartPrice>${calcListFromBuyerPays(newPrice).toFixed(2)}</StartPrice>
   </Item>
 </ReviseItemRequest>`
 
@@ -787,7 +791,7 @@ export async function createVariationListing(
   // Individual Variation blocks — one per card
   const variationsXml = opts.variations.map(v => `    <Variation>
       <SKU>${escapeXml(v.sku)}</SKU>
-      <StartPrice>${v.price.toFixed(2)}</StartPrice>
+      <StartPrice>${calcListFromBuyerPays(v.price).toFixed(2)}</StartPrice>
       <Quantity>${v.quantity}</Quantity>
       <VariationSpecifics>
         <NameValueList>
@@ -940,7 +944,7 @@ export async function updateVariationQuantities(
   const variationsXml = updates.map(u => `    <Variation>
       <SKU>${escapeXml(u.sku)}</SKU>
       <Quantity>${u.quantity}</Quantity>${u.price != null ? `
-      <StartPrice>${u.price.toFixed(2)}</StartPrice>` : ''}
+      <StartPrice>${calcListFromBuyerPays(u.price).toFixed(2)}</StartPrice>` : ''}
     </Variation>`).join('\n')
 
   const xml = `${buildXmlHeader('ReviseFixedPriceItem', token)}
@@ -989,7 +993,7 @@ export async function addVariationsToListing(
 
   const newVariationsXml = newVariations.map(v => `    <Variation>
       <SKU>${escapeXml(v.sku)}</SKU>
-      <StartPrice>${v.price.toFixed(2)}</StartPrice>
+      <StartPrice>${calcListFromBuyerPays(v.price).toFixed(2)}</StartPrice>
       <Quantity>${v.quantity}</Quantity>
       <VariationSpecifics>
         <NameValueList>
