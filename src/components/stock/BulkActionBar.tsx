@@ -30,6 +30,7 @@ const STATUS_OPTIONS: { value: CardStatus; label: string; warn?: string }[] = [
   { value: 'In Stock', label: 'In Stock' },
   { value: 'Listed',   label: 'Listed' },
   { value: 'Sold',     label: 'Sold', warn: 'No sale records will be created.' },
+  { value: 'Traded',   label: 'Traded', warn: 'Marks as traded away — removed from active stock.' },
 ]
 
 export function BulkActionBar({

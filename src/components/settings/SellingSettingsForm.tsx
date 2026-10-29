@@ -155,7 +155,6 @@ export function SellingSettingsForm() {
               options={[
                 { value: 'market', label: 'Market (eBay median)' },
                 { value: 'cost',   label: 'Cost-plus (markup)' },
-                { value: 'fixed',  label: 'Fixed price' },
               ]}
             />
             <Input
@@ -183,9 +182,8 @@ export function SellingSettingsForm() {
               label="Photo pairing" value={form.pairing_mode}
               onChange={e => set('pairing_mode', e.target.value as FormState['pairing_mode'])}
               options={[
-                { value: 'pairs',             label: 'Front + back pairs' },
-                { value: 'fronts_then_backs', label: 'All fronts, then backs' },
-                { value: 'manual',            label: 'One photo per card' },
+                { value: 'pairs',  label: 'Front + back pairs' },
+                { value: 'manual', label: 'One photo per card' },
               ]}
             />
             <Input

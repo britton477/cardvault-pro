@@ -28,6 +28,7 @@ import {
   type PricingStrategy,
 } from '@/lib/pricing'
 import { useOrgSettings } from '@/hooks/useSettings'
+import { calcListFromBuyerPays } from '@/lib/fees'
 
 /** Where a batch of imported cards should end up on eBay. */
 export type ListingMode = 'none' | 'individual' | 'set'
@@ -61,7 +62,10 @@ function computeCosts(
     }
     const weight            = c.ebay_avg_sold / totalMarketValue
     const proportional_cost = totalSpend * weight
-    const profit_potential  = c.ebay_avg_sold - proportional_cost
+    // ebay_avg_sold is a buyer-pays market price; the seller nets the item price
+    // (after eBay's buyer-protection fee), so base profit on net revenue.
+    const net_revenue       = calcListFromBuyerPays(c.ebay_avg_sold)
+    const profit_potential  = net_revenue - proportional_cost
     const roi_pct           = proportional_cost > 0
       ? (profit_potential / proportional_cost) * 100
       : null
@@ -233,12 +237,13 @@ export function useBulkWizard(): BulkWizardHook {
   // current values without being added to dependency arrays (which would
   // re-create callbacks and re-schedule in-flight cards).
   const { data: orgSettings } = useOrgSettings()
-  const defaultsRef = useRef<{ condition: CardCondition; source: string; raritySource: 'tcg' | 'vision' }>({
-    condition: 'NM', source: 'Bulk Wizard', raritySource: 'tcg',
+  const defaultsRef = useRef<{ condition: CardCondition; source: string; language: string; raritySource: 'tcg' | 'vision' }>({
+    condition: 'NM', source: 'Bulk Wizard', language: 'EN', raritySource: 'tcg',
   })
   defaultsRef.current = {
     condition:    (orgSettings?.default_condition as CardCondition) ?? 'NM',
     source:       orgSettings?.default_source ?? 'Bulk Wizard',
+    language:     orgSettings?.default_language ?? 'EN',
     raritySource: orgSettings?.rarity_source ?? 'tcg',
   }
 
@@ -352,7 +357,7 @@ export function useBulkWizard(): BulkWizardHook {
     condition:         defaultsRef.current.condition,
     foil_type:         'Normal',
     rarity:            'Unknown',
-    language:          'EN',
+    language:          defaultsRef.current.language,
     confidence:        0,
     is_graded:         false,
     grader:            null,

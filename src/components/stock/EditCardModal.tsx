@@ -252,6 +252,7 @@ export function EditCardModal({ card, onClose }: EditCardModalProps) {
                   { value: 'In Stock', label: 'In Stock' },
                   { value: 'Listed',   label: 'Listed' },
                   { value: 'Sold',     label: 'Sold' },
+                  { value: 'Traded',   label: 'Traded' },
                 ]}
               />
               <Input

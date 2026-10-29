@@ -51,13 +51,6 @@ export function calcListFromBuyerPays(buyerPays: number): number {
   return Math.max(0.01, Math.round(lp * 100) / 100)
 }
 
-/**
- * Calculate the buyer total (list price + protection fee).
- */
-export function calcBuyerTotal(listPrice: number): number {
-  return Math.round((listPrice + calcBuyerFee(listPrice)) * 100) / 100
-}
-
 // =============================================================================
 // NET PROCEEDS — what YOU actually receive for a given list price.
 //
@@ -121,16 +114,3 @@ export function calcNetProceeds(listPrice: number, model: SellerModel): NetProce
 //
 // This file is for eBay's fee schedule only: what eBay charges, and how to
 // work backwards from a buyer-pays total. It does not decide prices.
-
-/**
- * Calculate profit on a sale.
- * profit = soldPrice - fees - shipping - purchasePrice
- */
-export function calcProfit(
-  soldPrice: number,
-  fees: number,
-  shipping: number,
-  purchasePrice: number,
-): number {
-  return Math.round((soldPrice - fees - shipping - purchasePrice) * 100) / 100
-}
